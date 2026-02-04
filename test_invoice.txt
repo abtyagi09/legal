@@ -1,0 +1,30 @@
+INVOICE
+
+Invoice Number: INV-2024-001
+Date: January 15, 2024
+Due Date: February 15, 2024
+
+BILL TO:
+ABC Corporation
+123 Business Street
+New York, NY 10001
+
+FROM:
+Legal Services LLC
+456 Law Avenue
+Boston, MA 02108
+
+SERVICES PROVIDED:
+- Contract Review and Negotiation: $5,000
+- Legal Consultation Services: $2,500
+- Document Drafting: $1,500
+- Court Filing Fees: $250
+
+SUBTOTAL: $9,250
+TAX (8%): $740
+TOTAL DUE: $9,990
+
+Payment Terms: Net 30 days
+Payment Methods: Bank Transfer, Check
+
+Thank you for your business.

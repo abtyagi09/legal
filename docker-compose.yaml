@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  legal-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: legal-document-agent:latest
+    container_name: legal-agent
+    
+    # Environment variables (use .env file for sensitive data)
+    environment:
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+    
+    # Mount configuration file
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - agent-logs:/app/logs
+    
+    # Port mapping (for API mode)
+    ports:
+      - "8000:8000"
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  agent-logs:
+    driver: local

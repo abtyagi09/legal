@@ -1,0 +1,110 @@
+# Azure Service Configuration for Legal Document Agent
+# Copy this file to config.yaml and fill in your actual values
+
+# Microsoft Foundry (formerly Azure AI Foundry) Configuration
+foundry:
+  # Your Microsoft Foundry project endpoint
+  # Example: https://your-project.api.azureml.ms
+  project_endpoint: "YOUR_FOUNDRY_PROJECT_ENDPOINT"
+  
+  # Your deployed model name
+  # Recommended: gpt-5, gpt-5-chat, claude-sonnet-4-5, or gpt-4.1
+  model_deployment_name: "gpt-5-chat"
+  
+  # Authentication method: "default_credential" or "api_key"
+  auth_method: "default_credential"
+  
+  # Optional: API key if using api_key auth_method
+  # api_key: "YOUR_API_KEY"
+
+# Azure AI Search Configuration
+search:
+  # Your Azure AI Search service endpoint
+  # Example: https://your-search-service.search.windows.net
+  service_endpoint: "YOUR_SEARCH_SERVICE_ENDPOINT"
+  
+  # Your search service API key
+  api_key: "YOUR_SEARCH_API_KEY"
+  
+  # The name of your search index for legal documents
+  index_name: "legal-documents-index"
+  
+  # Optional: Knowledge base name if using knowledge bases
+  # knowledge_base_name: "legal-kb"
+  
+  # Search configuration
+  top_results: 5
+  semantic_configuration: "default"
+
+# Azure Document Intelligence Configuration
+document_intelligence:
+  # Your Azure Document Intelligence endpoint
+  # Example: https://your-doc-intel.cognitiveservices.azure.com/
+  endpoint: "YOUR_DOCUMENT_INTELLIGENCE_ENDPOINT"
+  
+  # Your Document Intelligence API key
+  api_key: "YOUR_DOCUMENT_INTELLIGENCE_API_KEY"
+  
+  # Model to use for document analysis
+  # Options: prebuilt-document, prebuilt-layout, prebuilt-read, prebuilt-contract
+  model: "prebuilt-document"
+  
+  # Features to extract
+  features:
+    - "keyValuePairs"
+    - "tables"
+    - "paragraphs"
+    - "styles"
+
+# Agent Configuration
+agent:
+  name: "LegalDocumentAgent"
+  instructions: |
+    You are a specialized legal document management assistant. Your role is to help legal professionals:
+    
+    1. Search and retrieve relevant legal documents using semantic search
+    2. Extract and analyze information from legal documents
+    3. Provide insights on contracts, briefs, case files, and legal correspondence
+    4. Identify key clauses, terms, and obligations in documents
+    5. Summarize complex legal documents in clear, concise language
+    
+    Always maintain confidentiality and accuracy. When analyzing documents, cite specific sections 
+    or pages when possible. If you're uncertain about legal interpretation, clearly state so and 
+    recommend consulting with a legal professional.
+  
+  # Agent behavior settings
+  temperature: 0.3  # Lower temperature for more factual responses
+  max_tokens: 4000
+  
+  # Enable streaming responses
+  streaming: true
+
+# Azure Storage (Optional - for document upload)
+storage:
+  # Azure Storage account connection string
+  # connection_string: "YOUR_STORAGE_CONNECTION_STRING"
+  
+  # Container name for storing legal documents
+  # container_name: "legal-documents"
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # Enable Azure Monitor integration
+  azure_monitor_enabled: false
+  # connection_string: "YOUR_APPLICATION_INSIGHTS_CONNECTION_STRING"
+
+# Application Settings
+app:
+  # API server configuration (for FastAPI deployment)
+  host: "0.0.0.0"
+  port: 8000
+  
+  # Enable/disable features
+  enable_document_upload: true
+  enable_knowledge_base: true
+  
+  # Rate limiting
+  max_requests_per_minute: 60

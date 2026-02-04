@@ -1,0 +1,37 @@
+LEGAL DOCUMENT - SAMPLE CONTRACT
+
+This is a sample legal document for testing the Legal Document Agent application.
+
+CONTRACT AGREEMENT
+
+This Contract Agreement ("Agreement") is entered into as of February 4, 2026, by and between:
+
+Party A: ABC Corporation, a Delaware corporation
+Party B: XYZ Legal Services, LLC
+
+WHEREAS, Party A desires to retain Party B for legal consulting services;
+WHEREAS, Party B agrees to provide such services under the terms set forth herein;
+
+NOW, THEREFORE, in consideration of the mutual covenants and agreements contained herein, the parties agree as follows:
+
+1. SCOPE OF SERVICES
+   Party B shall provide legal consulting services as requested by Party A, including but not limited to contract review, compliance advisory, and legal research.
+
+2. COMPENSATION
+   Party A shall pay Party B at the rate of $300 per hour for services rendered.
+
+3. TERM
+   This Agreement shall commence on February 4, 2026, and continue for a period of one (1) year unless terminated earlier in accordance with this Agreement.
+
+4. CONFIDENTIALITY
+   Both parties agree to maintain strict confidentiality regarding all proprietary and confidential information disclosed during the term of this Agreement.
+
+5. TERMINATION
+   Either party may terminate this Agreement with thirty (30) days written notice.
+
+IN WITNESS WHEREOF, the parties have executed this Agreement as of the date first above written.
+
+ABC Corporation                    XYZ Legal Services, LLC
+By: John Smith                     By: Jane Doe
+Title: CEO                         Title: Managing Partner
+Date: February 4, 2026             Date: February 4, 2026

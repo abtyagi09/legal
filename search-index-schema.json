@@ -1,0 +1,109 @@
+{
+  "name": "legal-documents-index",
+  "fields": [
+    {
+      "name": "id",
+      "type": "Edm.String",
+      "key": true,
+      "searchable": false,
+      "filterable": false,
+      "sortable": false,
+      "facetable": false
+    },
+    {
+      "name": "title",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": false,
+      "sortable": true,
+      "facetable": false,
+      "analyzer": "en.microsoft"
+    },
+    {
+      "name": "content",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": false,
+      "sortable": false,
+      "facetable": false,
+      "analyzer": "en.microsoft"
+    },
+    {
+      "name": "document_type",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": true,
+      "sortable": true,
+      "facetable": true
+    },
+    {
+      "name": "document_date",
+      "type": "Edm.DateTimeOffset",
+      "searchable": false,
+      "filterable": true,
+      "sortable": true,
+      "facetable": true
+    },
+    {
+      "name": "author",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": true,
+      "sortable": true,
+      "facetable": true
+    },
+    {
+      "name": "parties",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": false,
+      "sortable": false,
+      "facetable": false
+    },
+    {
+      "name": "metadata",
+      "type": "Edm.String",
+      "searchable": true,
+      "filterable": false,
+      "sortable": false,
+      "facetable": false
+    }
+  ],
+  "semanticSearch": {
+    "defaultConfiguration": "default",
+    "configurations": [
+      {
+        "name": "default",
+        "prioritizedFields": {
+          "titleField": {
+            "fieldName": "title"
+          },
+          "prioritizedContentFields": [
+            {
+              "fieldName": "content"
+            }
+          ],
+          "prioritizedKeywordsFields": [
+            {
+              "fieldName": "document_type"
+            },
+            {
+              "fieldName": "author"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "suggesters": [
+    {
+      "name": "sg",
+      "searchMode": "analyzingInfixMatching",
+      "sourceFields": [
+        "title",
+        "document_type",
+        "author"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,66 @@
+# Azure Developer CLI (azd) configuration
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: legal-document-agent
+metadata:
+  template: legal-document-agent@0.0.1
+
+services:
+  agent:
+    project: .
+    language: python
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .
+
+hooks:
+  preprovision:
+    posix:
+      shell: sh
+      run: |
+        echo "Preparing to provision Azure resources..."
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "Preparing to provision Azure resources..."
+  
+  postprovision:
+    posix:
+      shell: sh
+      run: |
+        echo "Azure resources provisioned successfully!"
+        echo "Next steps:"
+        echo "1. Deploy a model in Microsoft Foundry"
+        echo "2. Update environment variables with your Foundry endpoint"
+        echo "3. Run 'azd deploy' to deploy the application"
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "Azure resources provisioned successfully!" -ForegroundColor Green
+        Write-Host "Next steps:" -ForegroundColor Yellow
+        Write-Host "1. Deploy a model in Microsoft Foundry"
+        Write-Host "2. Update environment variables with your Foundry endpoint"
+        Write-Host "3. Run 'azd deploy' to deploy the application"
+  
+  predeploy:
+    posix:
+      shell: sh
+      run: |
+        echo "Building Docker image..."
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "Building Docker image..." -ForegroundColor Cyan
+
+  postdeploy:
+    posix:
+      shell: sh
+      run: |
+        echo "Deployment complete!"
+        echo "Application URL: ${AZURE_CONTAINER_APP_URL}"
+    windows:
+      shell: pwsh
+      run: |
+        Write-Host "Deployment complete!" -ForegroundColor Green
+        Write-Host "Application URL: $env:AZURE_CONTAINER_APP_URL" -ForegroundColor Cyan
