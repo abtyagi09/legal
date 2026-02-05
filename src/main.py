@@ -17,7 +17,7 @@ from azure.search.documents.indexes.models import SearchIndex, SimpleField, Sear
 from azure.ai.documentintelligence.aio import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -270,6 +270,37 @@ async def ensure_search_index():
         await index_client.close()
 
 
+@app.get("/api/userinfo")
+async def get_user_info(request: Request):
+    """Get authenticated user information from Azure AD"""
+    # Azure Container Apps Easy Auth passes user info in headers
+    principal_header = request.headers.get("X-MS-CLIENT-PRINCIPAL")
+    
+    if not principal_header:
+        return {"authenticated": False}
+    
+    try:
+        import base64
+        import json
+        
+        # Decode the base64 encoded principal
+        decoded = base64.b64decode(principal_header).decode('utf-8')
+        principal = json.loads(decoded)
+        
+        # Extract user information
+        claims = {claim['typ']: claim['val'] for claim in principal.get('claims', [])}
+        
+        return {
+            "authenticated": True,
+            "name": claims.get('name', claims.get('preferred_username', 'User')),
+            "email": claims.get('preferred_username', claims.get('email', '')),
+            "auth_type": principal.get('auth_typ', 'aad')
+        }
+    except Exception as e:
+        logger.error(f"Error decoding user principal: {e}")
+        return {"authenticated": False}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Serve the frontend application"""
@@ -284,9 +315,13 @@ async def root():
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; }
             .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative; }
             .header h1 { font-size: 2em; margin-bottom: 10px; }
             .header p { opacity: 0.9; }
+            .user-info { position: absolute; top: 20px; right: 30px; display: flex; align-items: center; gap: 15px; background: rgba(255, 255, 255, 0.15); padding: 10px 20px; border-radius: 25px; backdrop-filter: blur(10px); }
+            .user-name { font-size: 14px; font-weight: 500; }
+            .signout-btn { background: rgba(255, 255, 255, 0.9); color: #667eea; border: none; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; }
+            .signout-btn:hover { background: white; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
             .main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
             .panel { background: white; border-radius: 10px; padding: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
             .panel h2 { color: #333; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #667eea; }
@@ -321,6 +356,10 @@ async def root():
             <div class="header">
                 <h1>🏛️ Legal Document Agent</h1>
                 <p>AI-powered document management and intelligent search for legal professionals</p>
+                <div class="user-info" id="userInfo" style="display: none;">
+                    <span class="user-name" id="userName">👤 Loading...</span>
+                    <button class="signout-btn" onclick="signOut()">Sign Out</button>
+                </div>
             </div>
             
             <div class="main-grid">
@@ -361,6 +400,26 @@ async def root():
 
         <script>
             let sessionId = null;
+
+            // Load user information on page load
+            async function loadUserInfo() {
+                try {
+                    const response = await fetch('/api/userinfo');
+                    const data = await response.json();
+                    
+                    if (data.authenticated) {
+                        document.getElementById('userName').textContent = `👤 ${data.name}`;
+                        document.getElementById('userInfo').style.display = 'flex';
+                    }
+                } catch (error) {
+                    console.error('Error loading user info:', error);
+                }
+            }
+
+            function signOut() {
+                // Azure Container Apps Easy Auth logout endpoint
+                window.location.href = '/.auth/logout?post_logout_redirect_uri=' + encodeURIComponent(window.location.origin);
+            }
 
             // Upload zone drag and drop
             const uploadZone = document.getElementById('uploadZone');
@@ -478,6 +537,9 @@ async def root():
 
             // Load documents on page load
             loadDocuments();
+            
+            // Load user information
+            loadUserInfo();
         </script>
     </body>
     </html>
