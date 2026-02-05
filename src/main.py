@@ -59,10 +59,44 @@ config = None
 # In-memory session storage (for production, use Redis or similar)
 conversation_history = {}
 
+# Helper function to get user ID from Azure AD authentication
+def get_user_id(request: Request) -> Optional[str]:
+    """Extract user ID from Azure Container Apps Easy Auth headers"""
+    import base64
+    import json
+    
+    principal_header = request.headers.get("X-MS-CLIENT-PRINCIPAL")
+    if principal_header:
+        try:
+            principal_data = base64.b64decode(principal_header).decode('utf-8')
+            principal = json.loads(principal_data)
+            logger.info(f"Principal data: {principal}")
+            
+            # Try multiple ways to get user ID
+            user_id = principal.get('userId')
+            if user_id:
+                return user_id
+            
+            # Check claims for oid (object id)
+            claims = {claim['typ']: claim['val'] for claim in principal.get('claims', [])}
+            user_id = claims.get('oid') or claims.get('sub') or claims.get('http://schemas.microsoft.com/identity/claims/objectidentifier')
+            
+            if user_id:
+                return user_id
+                
+            # Last resort - use first claim value
+            if principal.get('claims'):
+                return principal['claims'][0].get('val')
+                
+        except Exception as e:
+            logger.error(f"Error parsing user principal: {e}")
+    return None
+
 # Pydantic models
 class ChatMessage(BaseModel):
     message: str
     session_id: Optional[str] = None
+    security_enabled: Optional[bool] = True
 
 class ChatResponse(BaseModel):
     response: str
@@ -266,6 +300,8 @@ async def ensure_search_index():
                 SearchableField(name="content", type=SearchFieldDataType.String),
                 SimpleField(name="upload_date", type=SearchFieldDataType.String, sortable=True),
                 SimpleField(name="file_name", type=SearchFieldDataType.String),
+                SimpleField(name="owner_id", type=SearchFieldDataType.String, filterable=True),
+                SearchableField(name="allowed_users", type=SearchFieldDataType.Collection(SearchFieldDataType.String), filterable=True),
             ]
         )
         
@@ -295,8 +331,18 @@ async def get_user_info(request: Request):
         # Extract user information
         claims = {claim['typ']: claim['val'] for claim in principal.get('claims', [])}
         
+        # Try multiple ways to get user ID
+        user_id = (principal.get('userId') or 
+                  claims.get('oid') or 
+                  claims.get('sub') or 
+                  claims.get('http://schemas.microsoft.com/identity/claims/objectidentifier') or 
+                  '')
+        
+        logger.info(f"User info - ID: {user_id}, Claims: {list(claims.keys())}")
+        
         return {
             "authenticated": True,
+            "id": user_id,
             "name": claims.get('name', claims.get('preferred_username', 'User')),
             "email": claims.get('preferred_username', claims.get('email', '')),
             "auth_type": principal.get('auth_typ', 'aad')
@@ -323,9 +369,10 @@ async def root():
             .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: relative; }
             .header h1 { font-size: 2em; margin-bottom: 10px; }
             .header p { opacity: 0.9; }
-            .user-info { position: absolute; top: 20px; right: 30px; display: flex; align-items: center; gap: 15px; background: rgba(255, 255, 255, 0.15); padding: 10px 20px; border-radius: 25px; backdrop-filter: blur(10px); }
+            .user-info { position: absolute; top: 20px; right: 30px; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; background: rgba(255, 255, 255, 0.15); padding: 10px 20px; border-radius: 15px; backdrop-filter: blur(10px); }
             .user-name { font-size: 14px; font-weight: 500; }
-            .signout-btn { background: rgba(255, 255, 255, 0.9); color: #667eea; border: none; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; }
+            .user-id { font-size: 10px; color: rgba(255, 255, 255, 0.8); font-family: monospace; }
+            .signout-btn { background: rgba(255, 255, 255, 0.9); color: #667eea; border: none; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.2s; margin-top: 5px; }
             .signout-btn:hover { background: white; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
             .main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
             .panel { background: white; border-radius: 10px; padding: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -354,6 +401,10 @@ async def root():
             .status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
             .loading { display: inline-block; width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite; }
             @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            .security-toggle { background: rgba(255, 255, 255, 0.9); padding: 15px 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: none; margin: 15px auto 0; max-width: 400px; }
+            .security-toggle label { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; color: #333; justify-content: center; }
+            .security-toggle input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+            .security-toggle .description { font-size: 11px; color: #666; margin-top: 5px; }
         </style>
     </head>
     <body>
@@ -363,7 +414,15 @@ async def root():
                 <p>AI-powered document management and intelligent search for legal professionals</p>
                 <div class="user-info" id="userInfo" style="display: none;">
                     <span class="user-name" id="userName">👤 Loading...</span>
+                    <span class="user-id" id="userId"></span>
                     <button class="signout-btn" onclick="signOut()">Sign Out</button>
+                </div>
+                <div class="security-toggle" id="securityToggle" style="display: none;">
+                    <label>
+                        <input type="checkbox" id="enableSecurity" onchange="toggleSecurity()" checked>
+                        <span>🔒 Enable Document-Level Security</span>
+                    </label>
+                    <div class="description">When enabled, you only see your own documents</div>
                 </div>
             </div>
             
@@ -406,6 +465,22 @@ async def root():
         <script>
             let sessionId = null;
 
+            // Security settings
+            function getSecurityEnabled() {
+                const saved = localStorage.getItem('documentSecurityEnabled');
+                return saved === null ? true : saved === 'true';
+            }
+
+            function toggleSecurity() {
+                const enabled = document.getElementById('enableSecurity').checked;
+                localStorage.setItem('documentSecurityEnabled', enabled);
+                // Reload documents with new security setting
+                loadDocuments();
+            }
+
+            // Store current user ID globally
+            let currentUserId = null;
+
             // Load user information on page load
             async function loadUserInfo() {
                 try {
@@ -413,8 +488,14 @@ async def root():
                     const data = await response.json();
                     
                     if (data.authenticated) {
+                        currentUserId = data.id;
                         document.getElementById('userName').textContent = `👤 ${data.name}`;
+                        document.getElementById('userId').textContent = `ID: ${data.id || 'N/A'}`;
                         document.getElementById('userInfo').style.display = 'flex';
+                        document.getElementById('securityToggle').style.display = 'block';
+                        
+                        // Set checkbox state from localStorage
+                        document.getElementById('enableSecurity').checked = getSecurityEnabled();
                     }
                 } catch (error) {
                     console.error('Error loading user info:', error);
@@ -475,7 +556,8 @@ async def root():
                     }
                 }
 
-                loadDocuments();
+                // Refresh document list after short delay to allow index to update
+                setTimeout(() => loadDocuments(), 500);
                 setTimeout(() => { status.style.display = 'none'; }, 5000);
             }
 
@@ -489,22 +571,26 @@ async def root():
                         method: 'DELETE'
                     });
 
-                    if (!response.ok) throw new Error('Delete failed');
-                    
                     const result = await response.json();
+                    
+                    if (!response.ok) {
+                        console.error('Delete failed:', result.detail);
+                        return;
+                    }
+                    
                     console.log('Delete result:', result);
                     
-                    // Reload document list
-                    loadDocuments();
+                    // Reload document list after short delay to allow index to update
+                    setTimeout(() => loadDocuments(), 500);
                 } catch (error) {
                     console.error('Error deleting document:', error);
-                    alert('Failed to delete document: ' + error.message);
                 }
             }
 
             async function loadDocuments() {
                 try {
-                    const response = await fetch('/api/documents');
+                    const securityEnabled = getSecurityEnabled();
+                    const response = await fetch(`/api/documents?security=${securityEnabled}`);
                     const documents = await response.json();
                     
                     const list = document.getElementById('documentList');
@@ -513,21 +599,32 @@ async def root():
                         return;
                     }
 
-                    list.innerHTML = documents.map(doc => `
-                        <div class="document-item" style="display: flex; justify-content: space-between; align-items: center;">
-                            <div style="flex: 1;">
-                                <div class="document-title">${doc.title}</div>
-                                <div class="document-meta">Uploaded: ${new Date(doc.upload_date).toLocaleDateString()}</div>
+                    list.innerHTML = documents.map(doc => {
+                        const isOwner = currentUserId && doc.owner_id === currentUserId;
+                        const buttonDisabled = !isOwner;
+                        const buttonStyle = buttonDisabled 
+                            ? 'padding: 6px 12px; background: #ccc; color: #666; border: none; border-radius: 4px; cursor: not-allowed; font-size: 13px;'
+                            : 'padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; transition: background 0.2s;';
+                        const buttonTooltip = buttonDisabled 
+                            ? 'Only the uploader can delete this document'
+                            : 'Delete this document';
+                        
+                        return `
+                            <div class="document-item" style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="flex: 1;">
+                                    <div class="document-title">${doc.title}</div>
+                                    <div class="document-meta">Uploaded: ${new Date(doc.upload_date).toLocaleDateString()}</div>
+                                </div>
+                                <button onclick="${buttonDisabled ? 'return false;' : `deleteDocument('${doc.id}', '${doc.title.replace(/'/g, "\\'")}')`}" 
+                                        style="${buttonStyle}"
+                                        ${buttonDisabled ? '' : `onmouseover="this.style.background='#c82333'" onmouseout="this.style.background='#dc3545'"`}
+                                        ${buttonDisabled ? 'disabled' : ''}
+                                        title="${buttonTooltip}">
+                                    🗑️ Delete
+                                </button>
                             </div>
-                            <button onclick="deleteDocument('${doc.id}', '${doc.title.replace(/'/g, "\\'")}')"
-                                    style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; transition: background 0.2s;"
-                                    onmouseover="this.style.background='#c82333'"
-                                    onmouseout="this.style.background='#dc3545'"
-                                    title="Delete document">
-                                🗑️ Delete
-                            </button>
-                        </div>
-                    `).join('');
+                        `;
+                    }).join('');
                 } catch (error) {
                     console.error('Error loading documents:', error);
                 }
@@ -550,10 +647,11 @@ async def root():
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
                 try {
+                    const securityEnabled = getSecurityEnabled();
                     const response = await fetch('/api/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message, session_id: sessionId })
+                        body: JSON.stringify({ message, session_id: sessionId, security_enabled: securityEnabled })
                     });
 
                     const data = await response.json();
@@ -651,9 +749,13 @@ async def generate_embedding(text: str) -> List[float]:
 
 
 @app.post("/api/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), request: Request = None):
     """Upload and index a document - supports PDF, DOCX, images (JPG, PNG, BMP, TIFF), and text files"""
     logger.info(f"Uploading file: {file.filename}, content_type: {file.content_type}")
+    
+    # Get current user ID
+    user_id = get_user_id(request) if request else None
+    logger.info(f"Upload by user: {user_id or 'anonymous'}")
     
     try:
         # Read file content
@@ -766,7 +868,9 @@ async def upload_document(file: UploadFile = File(...)):
             "title": file.filename,
             "content": content_for_index,
             "upload_date": datetime.utcnow().isoformat(),
-            "file_name": file.filename
+            "file_name": file.filename,
+            "owner_id": user_id or "anonymous",
+            "allowed_users": [user_id] if user_id else ["anonymous"]
         }
         
         # Add vector if generated successfully
@@ -774,7 +878,7 @@ async def upload_document(file: UploadFile = File(...)):
             document["content_vector"] = content_vector
             logger.info(f"✓ Added {len(content_vector)}-dimensional embedding to document")
         
-        logger.info(f"Indexing document - ID: {doc_id}, Content: {len(content_for_index)} chars, Method: {extraction_method}, Has Vector: {bool(content_vector)}")
+        logger.info(f"Indexing document - ID: {doc_id}, Content: {len(content_for_index)} chars, Method: {extraction_method}, Has Vector: {bool(content_vector)}, Owner: {user_id or 'anonymous'}")
         
         # Index in Azure AI Search
         search_client = SearchClient(
@@ -806,10 +910,12 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 @app.delete("/api/documents/{document_id}")
-async def delete_document(document_id: str):
-    """Delete a document from the search index"""
+async def delete_document(document_id: str, request: Request = None):
+    """Delete a document from the search index (only owner can delete)"""
     try:
-        logger.info(f"Deleting document: {document_id}")
+        # Get current user ID
+        user_id = get_user_id(request) if request else None
+        logger.info(f"Delete request for document: {document_id} by user: {user_id or 'anonymous'}")
         
         search_client = SearchClient(
             endpoint=config.search_endpoint,
@@ -818,6 +924,20 @@ async def delete_document(document_id: str):
         )
         
         try:
+            # First, verify the user owns this document
+            document = await search_client.get_document(key=document_id)
+            document_owner = document.get("owner_id")
+            
+            logger.info(f"Document owner: {document_owner}, Requesting user: {user_id}")
+            
+            # Check if user is the owner
+            if user_id and document_owner and user_id != document_owner:
+                logger.warning(f"User {user_id} attempted to delete document owned by {document_owner}")
+                raise HTTPException(
+                    status_code=403, 
+                    detail="You can only delete documents that you uploaded"
+                )
+            
             # Delete the document from the index
             result = await search_client.delete_documents(documents=[{"id": document_id}])
             logger.info(f"Delete result: {result}")
@@ -830,15 +950,21 @@ async def delete_document(document_id: str):
         finally:
             await search_client.close()
             
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error deleting document: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/documents")
-async def get_documents():
+async def get_documents(request: Request = None, security: bool = True):
     """Get list of indexed documents"""
     try:
+        # Get current user ID
+        user_id = get_user_id(request) if request else None
+        logger.info(f"Fetching documents for user: {user_id or 'anonymous'} (security: {security})")
+        
         search_client = SearchClient(
             endpoint=config.search_endpoint,
             index_name=config.search_index_name,
@@ -846,9 +972,22 @@ async def get_documents():
         )
         
         try:
+            # Build security filter
+            security_filter = None
+            if security:
+                if user_id:
+                    security_filter = f"allowed_users/any(u: u eq '{user_id}')"
+                    logger.info(f"Applying document list filter for user {user_id}: {security_filter}")
+                else:
+                    security_filter = "allowed_users/any(u: u eq 'anonymous')"
+                    logger.info(f"Applying document list filter for anonymous: {security_filter}")
+            else:
+                logger.info("Document-level security disabled - showing all documents")
+            
             results = await search_client.search(
                 search_text="*",
-                select=["id", "title", "upload_date", "file_name", "content"],
+                select=["id", "title", "upload_date", "file_name", "content", "owner_id"],
+                filter=security_filter,
                 order_by=["upload_date desc"],
                 top=50
             )
@@ -859,6 +998,7 @@ async def get_documents():
                     "id": result["id"],
                     "title": result.get("title", "Untitled"),
                     "content": result.get("content", "")[:200] + "..." if result.get("content") else "",
+                    "owner_id": result.get("owner_id"),
                     "content_length": len(result.get("content", "")),
                     "upload_date": result.get("upload_date", "")
                 })
@@ -906,10 +1046,13 @@ async def get_document_content(document_id: str):
 
 
 @app.post("/api/chat")
-async def chat(message: ChatMessage):
+async def chat(message: ChatMessage, request: Request = None):
     """Chat with the agent using AI model with hybrid search (keyword + vector)"""
     try:
-        logger.info(f"Chat query: {message.message}")
+        # Get current user ID for security filtering
+        user_id = get_user_id(request) if request else None
+        security_enabled = message.security_enabled
+        logger.info(f"Chat query: {message.message} (User: {user_id or 'anonymous'}, Security: {security_enabled})")
         
         # Generate query embedding for vector search
         logger.info("Generating query embedding for hybrid search...")
@@ -941,10 +1084,23 @@ async def chat(message: ChatMessage):
             
             # Perform hybrid search (combines keyword and vector search)
             # Vector weight is higher for better semantic matching
+            # Build security filter
+            security_filter = None
+            if security_enabled:
+                if user_id:
+                    security_filter = f"allowed_users/any(u: u eq '{user_id}')"
+                    logger.info(f"Applying security filter for user: {user_id}")
+                else:
+                    security_filter = "allowed_users/any(u: u eq 'anonymous')"
+                    logger.info("Applying security filter for anonymous user")
+            else:
+                logger.info("Document-level security disabled - searching all documents")
+            
             results = await search_client.search(
                 search_text=message.message if message.message and message.message.strip() else None,
                 vector_queries=vector_queries if vector_queries else None,
                 select=["title", "content", "file_name"],
+                filter=security_filter,
                 query_type="semantic",  # Always use semantic ranking for better relevance
                 semantic_configuration_name="default",
                 top=3  # Get top 3 most relevant results

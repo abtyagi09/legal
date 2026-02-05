@@ -232,34 +232,56 @@ A production-ready AI agent application built with Microsoft Agent Framework tha
 ## 🎯 Key Features
 
 1. **Semantic Document Search**
+   - Hybrid search combining keyword + vector embeddings (text-embedding-3-small)
    - Natural language queries across legal documents
+   - Semantic ranking with custom relevance boosting
+   - Smart pattern matching for IDs (e.g., invoice numbers)
    - Filter by document type, date, and metadata
    - Retrieve specific documents by ID
 
 2. **Document Analysis**
+   - Azure Document Intelligence with layout model for better table extraction
    - Extract text, tables, and key-value pairs
    - Analyze document structure and layout
    - Support for PDFs, images, and scanned documents
+   - 8000-character context window per document
 
 3. **AI-Powered Insights**
+   - GPT-4o-mini model from Azure AI Foundry
    - Summarize complex legal documents
    - Identify key clauses and obligations
    - Answer questions about document content
+   - Conversation history maintenance (10 messages per session)
+   - Low temperature (0.1) for consistent, factual responses
+   - Source attribution with document tracking
 
-4. **Production-Ready**
+4. **Security & Access Control**
+   - Azure AD authentication via Container Apps Easy Auth
+   - Document-level security with per-user access control
+   - Owner-based deletion permissions (only uploader can delete)
+   - Toggleable security settings in UI
+   - OData security filters on all search operations
+   - User identity extraction from Azure AD claims
+   - Visual feedback for restricted actions (disabled buttons with tooltips)
+
+5. **Production-Ready**
    - Containerized with Docker
    - Deployable to Azure Container Apps
-   - Managed identity support
+   - Managed identity support for Azure services
    - Comprehensive logging and monitoring
+   - Auto-scaling based on load
+   - Automatic UI refresh after operations
 
 ## 🔧 Technology Stack
 
-- **Agent Framework**: Microsoft Agent Framework (Python)
-- **AI Model**: GPT-5 (Microsoft Foundry)
-- **Search**: Azure AI Search with semantic search
-- **Document Processing**: Azure Document Intelligence
-- **Deployment**: Docker + Azure Container Apps
-- **Authentication**: Azure Managed Identity / API Keys
+- **Agent Framework**: Microsoft Agent Framework (Python) / FastAPI for web interface
+- **AI Model**: GPT-4o-mini (Azure AI Foundry) - Temperature 0.1, Max tokens 2000
+- **Embeddings**: text-embedding-3-small (Azure OpenAI) - 1536 dimensions
+- **Search**: Azure AI Search with hybrid search (keyword + vector) and semantic ranking
+- **Document Processing**: Azure Document Intelligence (layout model for tables)
+- **Authentication**: Azure AD via Container Apps Easy Auth
+- **Deployment**: Docker + Azure Container Apps with auto-scaling
+- **Security**: Managed Identity, RBAC, document-level access control
 
 ## 📁 Project Structure
 
@@ -336,12 +358,18 @@ az containerapp create --name legal-agent --image <acr-name>.azurecr.io/legal-do
 
 ## 🔐 Security Features
 
-- Managed Identity support (no hard-coded keys)
-- Azure Key Vault integration for secrets
-- Non-root container user
-- Network isolation with VNet
-- Rate limiting
-- Comprehensive audit logging
+- **Azure AD Authentication**: User identity via Container Apps Easy Auth
+- **Document-Level Security**: Per-user access control with `owner_id` and `allowed_users` fields
+- **Owner-Based Permissions**: Only uploaders can delete their documents
+- **OData Security Filters**: Applied on all search/list operations
+- **Toggleable Security**: UI setting to enable/disable security (persisted in localStorage)
+- **Managed Identity**: No hard-coded keys for Azure services
+- **Visual Permission Feedback**: Disabled buttons with tooltips for restricted actions
+- **Azure Key Vault**: Integration for secrets (API keys stored securely)
+- **Non-root Container**: User security best practices
+- **Network Isolation**: VNet support with Azure Container Apps
+- **Rate Limiting**: Protection against abuse
+- **Comprehensive Audit Logging**: All operations logged to Application Insights
 
 ## 📊 Configuration
 
@@ -395,6 +423,40 @@ Example queries to test:
 5. **Deploy to Azure** - Deploy to Container Apps for production
 6. **Monitor** - Set up Application Insights for monitoring
 7. **Customize** - Adjust agent instructions for your workflows
+
+## 📝 Recent Updates (February 2026)
+
+### Security Enhancements
+- ✅ Implemented document-level security with per-user access control
+- ✅ Added owner-based deletion permissions (only uploader can delete)
+- ✅ Created toggleable security UI control (enable/disable per-user filtering)
+- ✅ Added visual permission feedback (disabled buttons with tooltips)
+- ✅ Enhanced user ID extraction from Azure AD claims (supports multiple claim types)
+
+### Search & AI Improvements
+- ✅ Implemented hybrid search (keyword + vector embeddings)
+- ✅ Added semantic ranking with custom relevance boosting
+- ✅ Smart pattern matching for invoice numbers and IDs
+- ✅ Switched to Document Intelligence layout model for better table extraction
+- ✅ Increased context window to 8000 characters per document
+- ✅ Reduced AI temperature to 0.1 for consistent, factual responses
+- ✅ Added conversation history (maintains context across 10 messages)
+- ✅ Implemented source attribution tracking (shows only actually-used documents)
+
+### UI/UX Enhancements
+- ✅ Security toggle positioned centrally below header
+- ✅ User info display with name and ID
+- ✅ Automatic document list refresh after upload/delete (500ms delay)
+- ✅ Owner-based delete button state (disabled with tooltip for non-owners)
+- ✅ No more popup alerts - all feedback via UI elements
+- ✅ HTML formatted AI responses with proper styling
+
+### Architecture Updates
+- ✅ Search index schema updated with `owner_id` and `allowed_users` (Collection type)
+- ✅ OData collection filters for multi-user scenarios
+- ✅ Backend endpoint security parameter support
+- ✅ Session-based conversation management (in-memory storage)
+- ✅ Embedding generation with Azure OpenAI text-embedding-3-small
 
 ## 🏆 Best Practices Applied
 
