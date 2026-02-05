@@ -14,8 +14,10 @@ from azure.core.credentials import AzureKeyCredential
 from azure.search.documents.aio import SearchClient
 from azure.search.documents.indexes.aio import SearchIndexClient
 from azure.search.documents.indexes.models import SearchIndex, SimpleField, SearchableField, SearchFieldDataType
+from azure.search.documents.models import VectorizedQuery
 from azure.ai.documentintelligence.aio import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+from openai import AsyncAzureOpenAI
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -564,6 +566,38 @@ async def health():
         }
 
 
+async def generate_embedding(text: str) -> List[float]:
+    """Generate embedding vector for text using Azure OpenAI"""
+    try:
+        if not config.openai_endpoint or not config.openai_api_key:
+            logger.warning("Azure OpenAI not configured, skipping embedding generation")
+            return []
+        
+        # Create OpenAI client
+        client = AsyncAzureOpenAI(
+            azure_endpoint=config.openai_endpoint,
+            api_key=config.openai_api_key,
+            api_version="2024-02-01"
+        )
+        
+        # Generate embedding
+        # Truncate text to avoid token limits (max ~8000 tokens for ada-002)
+        text_for_embedding = text[:8000] if len(text) > 8000 else text
+        
+        response = await client.embeddings.create(
+            model=config.openai_embedding_deployment,
+            input=text_for_embedding
+        )
+        
+        embedding = response.data[0].embedding
+        logger.info(f"✓ Generated embedding vector with {len(embedding)} dimensions")
+        return embedding
+        
+    except Exception as e:
+        logger.error(f"✗ Embedding generation failed: {e}", exc_info=True)
+        return []
+
+
 @app.post("/api/upload")
 async def upload_document(file: UploadFile = File(...)):
     """Upload and index a document - supports PDF, DOCX, images (JPG, PNG, BMP, TIFF), and text files"""
@@ -669,6 +703,10 @@ async def upload_document(file: UploadFile = File(...)):
         # Limit content size for indexing (Azure AI Search has limits)
         content_for_index = extracted_text[:50000] if len(extracted_text) > 50000 else extracted_text
         
+        # Generate embedding vector for the content
+        logger.info("Generating embedding vector for document...")
+        content_vector = await generate_embedding(content_for_index)
+        
         # Create document for indexing
         doc_id = str(uuid.uuid4())
         document = {
@@ -679,7 +717,12 @@ async def upload_document(file: UploadFile = File(...)):
             "file_name": file.filename
         }
         
-        logger.info(f"Indexing document - ID: {doc_id}, Content: {len(content_for_index)} chars, Method: {extraction_method}")
+        # Add vector if generated successfully
+        if content_vector:
+            document["content_vector"] = content_vector
+            logger.info(f"✓ Added {len(content_vector)}-dimensional embedding to document")
+        
+        logger.info(f"Indexing document - ID: {doc_id}, Content: {len(content_for_index)} chars, Method: {extraction_method}, Has Vector: {bool(content_vector)}")
         
         # Index in Azure AI Search
         search_client = SearchClient(
@@ -749,11 +792,15 @@ async def get_documents():
 
 @app.post("/api/chat")
 async def chat(message: ChatMessage):
-    """Chat with the agent using AI model"""
+    """Chat with the agent using AI model with hybrid search (keyword + vector)"""
     try:
         logger.info(f"Chat query: {message.message}")
         
-        # Search for relevant documents
+        # Generate query embedding for vector search
+        logger.info("Generating query embedding for hybrid search...")
+        query_vector = await generate_embedding(message.message)
+        
+        # Search for relevant documents using hybrid search
         search_client = SearchClient(
             endpoint=config.search_endpoint,
             index_name=config.search_index_name,
@@ -761,9 +808,24 @@ async def chat(message: ChatMessage):
         )
         
         try:
-            # Search for relevant documents
+            # Prepare vector query if embedding was generated
+            vector_queries = []
+            if query_vector:
+                vector_queries.append(
+                    VectorizedQuery(
+                        vector=query_vector,
+                        k_nearest_neighbors=3,
+                        fields="content_vector"
+                    )
+                )
+                logger.info("✓ Using hybrid search (keyword + vector)")
+            else:
+                logger.info("⚠ Using keyword-only search (no embeddings)")
+            
+            # Perform hybrid search (combines keyword and vector search)
             results = await search_client.search(
                 search_text=message.message,
+                vector_queries=vector_queries if vector_queries else None,
                 select=["title", "content", "file_name"],
                 top=3
             )
@@ -774,12 +836,15 @@ async def chat(message: ChatMessage):
                 result_count += 1
                 content = result.get('content', '')
                 if content:
+                    # Get search score for ranking
+                    score = result.get('@search.score', 0)
                     context_docs.append({
                         'title': result.get('title', 'Untitled'),
-                        'content': content[:1500]  # Increased for better context
+                        'content': content[:1500],  # Increased for better context
+                        'score': score
                     })
             
-            logger.info(f"Found {result_count} results, {len(context_docs)} with content")
+            logger.info(f"Hybrid search found {result_count} results, {len(context_docs)} with content")
             
             # Generate AI response using the model
             if context_docs:
@@ -888,8 +953,11 @@ async def chat(message: ChatMessage):
 
 @app.post("/api/search")
 async def search_documents(query: SearchQuery):
-    """Search documents"""
+    """Search documents using hybrid search (keyword + vector)"""
     try:
+        # Generate query embedding
+        query_vector = await generate_embedding(query.query)
+        
         search_client = SearchClient(
             endpoint=config.search_endpoint,
             index_name=config.search_index_name,
@@ -897,8 +965,21 @@ async def search_documents(query: SearchQuery):
         )
         
         try:
+            # Prepare vector query if embedding was generated
+            vector_queries = []
+            if query_vector:
+                vector_queries.append(
+                    VectorizedQuery(
+                        vector=query_vector,
+                        k_nearest_neighbors=query.top,
+                        fields="content_vector"
+                    )
+                )
+                logger.info(f"Hybrid search with {len(query_vector)}-dim vector")
+            
             results = await search_client.search(
                 search_text=query.query,
+                vector_queries=vector_queries if vector_queries else None,
                 top=query.top
             )
             
@@ -908,7 +989,8 @@ async def search_documents(query: SearchQuery):
                     "id": result["id"],
                     "title": result.get("title", "Untitled"),
                     "content": result.get("content", "")[:500],
-                    "upload_date": result.get("upload_date", "")
+                    "upload_date": result.get("upload_date", ""),
+                    "score": result.get("@search.score", 0)
                 })
             
             return documents

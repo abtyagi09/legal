@@ -57,6 +57,12 @@ class Config:
                 "project_endpoint": foundry_endpoint,
                 "model_deployment_name": os.getenv("FOUNDRY_MODEL_DEPLOYMENT", "gpt-5-chat")
             },
+            "openai": {
+                "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+                "api_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
+                "embedding_deployment": os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small"),
+                "embedding_dimensions": int(os.getenv("EMBEDDING_DIMENSIONS", "1536"))
+            },
             "search": {
                 "service_endpoint": os.getenv("SEARCH_ENDPOINT", ""),
                 "api_key": os.getenv("SEARCH_API_KEY", ""),
@@ -175,6 +181,26 @@ class Config:
     def agent_streaming(self) -> bool:
         """Get agent streaming setting"""
         return self.get("agent", "streaming", default=True)
+    
+    @property
+    def openai_endpoint(self) -> str:
+        """Get Azure OpenAI endpoint for embeddings"""
+        return self.get("openai", "endpoint", default="")
+    
+    @property
+    def openai_api_key(self) -> str:
+        """Get Azure OpenAI API key"""
+        return self.get("openai", "api_key", default="")
+    
+    @property
+    def openai_embedding_deployment(self) -> str:
+        """Get Azure OpenAI embedding deployment name"""
+        return self.get("openai", "embedding_deployment", default="text-embedding-3-small")
+    
+    @property
+    def embedding_dimensions(self) -> int:
+        """Get embedding dimensions"""
+        return self.get("openai", "embedding_dimensions", default=1536)
 
 
 def load_config(config_path: str = "config.yaml") -> Config:
