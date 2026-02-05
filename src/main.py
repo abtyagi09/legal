@@ -919,16 +919,22 @@ async def chat(message: ChatMessage):
             async for result in results:
                 result_count += 1
                 content = result.get('content', '')
+                score = result.get('@search.score', 0)
+                
+                # Only include results with a meaningful score
+                # Skip low-relevance results (score threshold)
+                if score < 0.01 and result_count > 1:
+                    logger.info(f"Skipping low-relevance result: {result.get('title', 'Untitled')} (score: {score:.4f})")
+                    continue
+                
                 if content:
-                    # Get search score for ranking
-                    score = result.get('@search.score', 0)
                     context_docs.append({
                         'title': result.get('title', 'Untitled'),
                         'content': content[:1500],  # Increased for better context
                         'score': score
                     })
             
-            logger.info(f"Hybrid search found {result_count} results, {len(context_docs)} with content")
+            logger.info(f"Hybrid search found {result_count} results, {len(context_docs)} with sufficient relevance")
             
             # Generate AI response using the model
             if context_docs:
