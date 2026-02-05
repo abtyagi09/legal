@@ -12,6 +12,10 @@ from azure.search.documents.indexes.models import (
     VectorSearch,
     VectorSearchProfile,
     HnswAlgorithmConfiguration,
+    SemanticConfiguration,
+    SemanticField,
+    SemanticPrioritizedFields,
+    SemanticSearch,
 )
 
 async def update_index():
@@ -37,9 +41,7 @@ async def update_index():
         # Add vector field if it doesn't exist
         vector_field_exists = any(field.name == "content_vector" for field in index.fields)
         
-        if vector_field_exists:
-            print("✓ Vector field 'content_vector' already exists")
-        else:
+        if not vector_field_exists:
             print("Adding vector field 'content_vector'...")
             
             # Add the vector field
@@ -52,33 +54,56 @@ async def update_index():
                     vector_search_profile_name="vector-profile"
                 )
             )
+        else:
+            print("✓ Vector field 'content_vector' already exists")
             
-            # Configure vector search if not present
-            if not index.vector_search:
-                index.vector_search = VectorSearch(
-                    algorithms=[
-                        HnswAlgorithmConfiguration(
-                            name="vector-algorithm",
-                            parameters={
-                                "m": 4,
-                                "efConstruction": 400,
-                                "efSearch": 500,
-                                "metric": "cosine"
-                            }
+        # Configure vector search if not present
+        if not index.vector_search:
+            print("Adding vector search configuration...")
+            index.vector_search = VectorSearch(
+                algorithms=[
+                    HnswAlgorithmConfiguration(
+                        name="vector-algorithm",
+                        parameters={
+                            "m": 4,
+                            "efConstruction": 400,
+                            "efSearch": 500,
+                            "metric": "cosine"
+                        }
+                    )
+                ],
+                profiles=[
+                    VectorSearchProfile(
+                        name="vector-profile",
+                        algorithm_configuration_name="vector-algorithm"
+                    )
+                ]
+            )
+        else:
+            print("✓ Vector search already configured")
+        
+        # Configure semantic search if not present
+        if not index.semantic_search:
+            print("Adding semantic search configuration...")
+            index.semantic_search = SemanticSearch(
+                configurations=[
+                    SemanticConfiguration(
+                        name="default",
+                        prioritized_fields=SemanticPrioritizedFields(
+                            title_field=SemanticField(field_name="title"),
+                            content_fields=[SemanticField(field_name="content")],
+                            keywords_fields=[SemanticField(field_name="file_name")]
                         )
-                    ],
-                    profiles=[
-                        VectorSearchProfile(
-                            name="vector-profile",
-                            algorithm_configuration_name="vector-algorithm"
-                        )
-                    ]
-                )
-            
-            # Update the index
-            print("Updating index...")
-            await client.create_or_update_index(index)
-            print("✓ Index updated successfully with vector field")
+                    )
+                ]
+            )
+        else:
+            print("✓ Semantic search already configured")
+        
+        # Update the index
+        print("Updating index...")
+        await client.create_or_update_index(index)
+        print("✓ Index updated successfully")
     
     finally:
         await client.close()
