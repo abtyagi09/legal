@@ -476,6 +476,29 @@ async def root():
                 setTimeout(() => { status.style.display = 'none'; }, 5000);
             }
 
+            async function deleteDocument(docId, docTitle) {
+                if (!confirm(`Are you sure you want to delete "${docTitle}"?`)) {
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/api/documents/${docId}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (!response.ok) throw new Error('Delete failed');
+                    
+                    const result = await response.json();
+                    console.log('Delete result:', result);
+                    
+                    // Reload document list
+                    loadDocuments();
+                } catch (error) {
+                    console.error('Error deleting document:', error);
+                    alert('Failed to delete document: ' + error.message);
+                }
+            }
+
             async function loadDocuments() {
                 try {
                     const response = await fetch('/api/documents');
@@ -488,9 +511,18 @@ async def root():
                     }
 
                     list.innerHTML = documents.map(doc => `
-                        <div class="document-item">
-                            <div class="document-title">${doc.title}</div>
-                            <div class="document-meta">Uploaded: ${new Date(doc.upload_date).toLocaleDateString()}</div>
+                        <div class="document-item" style="display: flex; justify-content: space-between; align-items: center;">
+                            <div style="flex: 1;">
+                                <div class="document-title">${doc.title}</div>
+                                <div class="document-meta">Uploaded: ${new Date(doc.upload_date).toLocaleDateString()}</div>
+                            </div>
+                            <button onclick="deleteDocument('${doc.id}', '${doc.title.replace(/'/g, "\\'")}')"
+                                    style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; transition: background 0.2s;"
+                                    onmouseover="this.style.background='#c82333'"
+                                    onmouseout="this.style.background='#dc3545'"
+                                    title="Delete document">
+                                🗑️ Delete
+                            </button>
                         </div>
                     `).join('');
                 } catch (error) {
@@ -767,6 +799,36 @@ async def upload_document(file: UploadFile = File(...)):
         
     except Exception as e:
         logger.error(f"Error uploading document: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/documents/{document_id}")
+async def delete_document(document_id: str):
+    """Delete a document from the search index"""
+    try:
+        logger.info(f"Deleting document: {document_id}")
+        
+        search_client = SearchClient(
+            endpoint=config.search_endpoint,
+            index_name=config.search_index_name,
+            credential=AzureKeyCredential(config.search_api_key)
+        )
+        
+        try:
+            # Delete the document from the index
+            result = await search_client.delete_documents(documents=[{"id": document_id}])
+            logger.info(f"Delete result: {result}")
+            
+            return {
+                "status": "success",
+                "message": f"Document {document_id} deleted successfully"
+            }
+            
+        finally:
+            await search_client.close()
+            
+    except Exception as e:
+        logger.error(f"Error deleting document: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
