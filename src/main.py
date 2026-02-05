@@ -925,7 +925,7 @@ async def chat(message: ChatMessage):
                 title = result.get('title', 'Untitled')
                 
                 # Boost score if query terms appear in the content (exact match bonus)
-                query_lower = user_message.lower()
+                query_lower = message.message.lower()
                 content_lower = content.lower()
                 
                 # Check for exact phrase matches (e.g., invoice numbers, names)
