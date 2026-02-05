@@ -916,25 +916,35 @@ async def chat(message: ChatMessage):
             
             context_docs = []
             result_count = 0
+            top_score = 0
+            
             async for result in results:
                 result_count += 1
                 content = result.get('content', '')
                 score = result.get('@search.score', 0)
                 
-                # Only include results with a meaningful score
-                # Skip low-relevance results (score threshold)
-                if score < 0.01 and result_count > 1:
-                    logger.info(f"Skipping low-relevance result: {result.get('title', 'Untitled')} (score: {score:.4f})")
-                    continue
+                logger.info(f"Result {result_count}: {result.get('title', 'Untitled')} - Score: {score:.4f}")
+                
+                # Track the highest score
+                if result_count == 1:
+                    top_score = score
+                
+                # If we have multiple results, only include results within 20% of the top score
+                # This filters out less relevant matches
+                if result_count > 1 and top_score > 0:
+                    score_ratio = score / top_score
+                    if score_ratio < 0.80:
+                        logger.info(f"Filtering out result: {result.get('title', 'Untitled')} (score {score:.4f} is {score_ratio:.1%} of top score {top_score:.4f})")
+                        continue
                 
                 if content:
                     context_docs.append({
                         'title': result.get('title', 'Untitled'),
-                        'content': content[:1500],  # Increased for better context
+                        'content': content[:1500],
                         'score': score
                     })
             
-            logger.info(f"Hybrid search found {result_count} results, {len(context_docs)} with sufficient relevance")
+            logger.info(f"Hybrid search found {result_count} results, using {len(context_docs)} after relevance filtering")
             
             # Generate AI response using the model
             if context_docs:
