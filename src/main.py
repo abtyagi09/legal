@@ -991,10 +991,10 @@ async def chat(message: ChatMessage):
                     
                     logger.info(f"Creating AI client with endpoint: {config.foundry_endpoint}")
                     
-                    # Get token with correct scope for AI services
+                    # Get token with correct scope for AI Foundry
                     base_credential = AsyncDefaultAzureCredential()
-                    token = await base_credential.get_token("https://cognitiveservices.azure.com/.default")
-                    logger.info(f"✓ Got token with Cognitive Services scope")
+                    token = await base_credential.get_token("https://ai.azure.com/.default")
+                    logger.info(f"✓ Got token with AI Foundry scope (https://ai.azure.com)")
                     
                     # Create a credential wrapper that returns the token
                     class TokenCredential:
