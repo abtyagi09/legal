@@ -796,9 +796,30 @@ async def chat(message: ChatMessage):
                     from azure.ai.inference.aio import ChatCompletionsClient
                     from azure.ai.inference.models import SystemMessage, UserMessage
                     from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+                    from azure.core.credentials import AccessToken
                     
                     logger.info(f"Creating AI client with endpoint: {config.foundry_endpoint}")
-                    credential = AsyncDefaultAzureCredential()
+                    
+                    # Get token with correct scope for AI services
+                    base_credential = AsyncDefaultAzureCredential()
+                    token = await base_credential.get_token("https://cognitiveservices.azure.com/.default")
+                    logger.info(f"✓ Got token with Cognitive Services scope")
+                    
+                    # Create a credential wrapper that returns the token
+                    class TokenCredential:
+                        def __init__(self, token):
+                            self.token = token
+                        
+                        async def get_token(self, *scopes, **kwargs):
+                            return self.token
+                        
+                        async def __aenter__(self):
+                            return self
+                        
+                        async def __aexit__(self, *args):
+                            pass
+                    
+                    credential = TokenCredential(token)
                     async with ChatCompletionsClient(
                         endpoint=config.foundry_endpoint,
                         credential=credential
