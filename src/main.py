@@ -890,11 +890,13 @@ async def chat(message: ChatMessage):
             # Prepare vector query if embedding was generated
             vector_queries = []
             if query_vector:
+                from azure.search.documents.models import VectorFilterMode
                 vector_queries.append(
                     VectorizedQuery(
                         vector=query_vector,
-                        k_nearest_neighbors=10,  # Get more candidates for better filtering
-                        fields="content_vector"
+                        k_nearest_neighbors=50,  # Get more candidates
+                        fields="content_vector",
+                        exhaustive=True  # Use exhaustive search for better accuracy
                     )
                 )
                 logger.info("✓ Using hybrid search (keyword + vector)")
@@ -902,13 +904,14 @@ async def chat(message: ChatMessage):
                 logger.info("⚠ Using keyword-only search (no embeddings)")
             
             # Perform hybrid search (combines keyword and vector search)
+            # Vector weight is higher for better semantic matching
             results = await search_client.search(
-                search_text=message.message,
+                search_text=message.message if message.message and message.message.strip() else None,
                 vector_queries=vector_queries if vector_queries else None,
                 select=["title", "content", "file_name"],
-                query_type="semantic" if not vector_queries else "simple",  # Use semantic ranking if no vectors
-                semantic_configuration_name="default" if not vector_queries else None,
-                top=5  # Get top 5 results for better context
+                query_type="semantic",  # Always use semantic ranking for better relevance
+                semantic_configuration_name="default",
+                top=3  # Get top 3 most relevant results
             )
             
             context_docs = []
