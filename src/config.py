@@ -55,7 +55,7 @@ class Config:
         self._config = {
             "foundry": {
                 "project_endpoint": foundry_endpoint,
-                "model_deployment_name": os.getenv("FOUNDRY_MODEL_DEPLOYMENT", "gpt-5-chat")
+                "model_deployment_name": os.getenv("FOUNDRY_MODEL_DEPLOYMENT", "gpt-4o-mini")
             },
             "openai": {
                 "endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),

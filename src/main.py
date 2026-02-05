@@ -56,6 +56,9 @@ app.add_middleware(
 # Global config
 config = None
 
+# In-memory session storage (for production, use Redis or similar)
+conversation_history = {}
+
 # Pydantic models
 class ChatMessage(BaseModel):
     message: str
@@ -688,9 +691,9 @@ async def upload_document(file: UploadFile = File(...)):
                     credential=credential
                 ) as doc_client:
                     
-                    # Start analysis with prebuilt-read model (supports text extraction from documents and images)
+                    # Start analysis with prebuilt-layout model (better for tables and structured documents)
                     poller = await doc_client.begin_analyze_document(
-                        "prebuilt-read",
+                        "prebuilt-layout",
                         document=BytesIO(content)
                     )
                     
@@ -856,6 +859,7 @@ async def get_documents():
                     "id": result["id"],
                     "title": result.get("title", "Untitled"),
                     "content": result.get("content", "")[:200] + "..." if result.get("content") else "",
+                    "content_length": len(result.get("content", "")),
                     "upload_date": result.get("upload_date", "")
                 })
             
@@ -867,6 +871,38 @@ async def get_documents():
     except Exception as e:
         logger.error(f"Error fetching documents: {e}", exc_info=True)
         return []
+
+
+@app.get("/api/documents/{document_id}/content")
+async def get_document_content(document_id: str):
+    """Get the full extracted content of a specific document for debugging"""
+    try:
+        search_client = SearchClient(
+            endpoint=config.search_endpoint,
+            index_name=config.search_index_name,
+            credential=AzureKeyCredential(config.search_api_key)
+        )
+        
+        try:
+            # Get the specific document
+            result = await search_client.get_document(key=document_id)
+            
+            return {
+                "id": result.get("id"),
+                "title": result.get("title"),
+                "file_name": result.get("file_name"),
+                "upload_date": result.get("upload_date"),
+                "content": result.get("content", ""),
+                "content_length": len(result.get("content", "")),
+                "has_vector": "content_vector" in result
+            }
+            
+        finally:
+            await search_client.close()
+            
+    except Exception as e:
+        logger.error(f"Error getting document content: {e}", exc_info=True)
+        raise HTTPException(status_code=404, detail=f"Document not found: {str(e)}")
 
 
 @app.post("/api/chat")
@@ -966,7 +1002,7 @@ async def chat(message: ChatMessage):
                 if content:
                     context_docs.append({
                         'title': title,
-                        'content': content[:1500],
+                        'content': content[:8000],  # Increased from 1500 to 8000 chars for more complete context
                         'score': boosted_score
                     })
             
@@ -975,11 +1011,16 @@ async def chat(message: ChatMessage):
             # Generate AI response using the model
             if context_docs:
                 logger.info("Context found, attempting to call AI model...")
-                # Build context for the AI
+                # Build context for the AI with document identifiers
                 context_text = "\n\n".join([
-                    f"Document: {doc['title']}\n{doc['content']}" 
-                    for doc in context_docs
+                    f"[DOCUMENT {i+1}: {doc['title']}]\n{doc['content']}" 
+                    for i, doc in enumerate(context_docs)
                 ])
+                
+                # Log context summary for debugging
+                for i, doc in enumerate(context_docs):
+                    logger.info(f"Document {i+1}: {doc['title']} - {len(doc['content'])} chars")
+                logger.info(f"Total context length: {len(context_text)} characters")
                 
                 # Call the AI model
                 try:
@@ -987,31 +1028,96 @@ async def chat(message: ChatMessage):
                     from openai import AsyncAzureOpenAI
                     from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential, get_bearer_token_provider
                     
-                    logger.info(f"Creating OpenAI client with endpoint: {config.foundry_endpoint}")
+                    # Extract base URL from the full foundry endpoint
+                    # The foundry_endpoint may include project path like:
+                    # https://aifoundryprojectdemoresource.services.ai.azure.com/api/projects/xxx
+                    # We need just: https://aifoundryprojectdemoresource.services.ai.azure.com
+                    from urllib.parse import urlparse
+                    parsed_url = urlparse(config.foundry_endpoint)
+                    base_endpoint = f"{parsed_url.scheme}://{parsed_url.netloc}"
+                    
+                    logger.info(f"Creating OpenAI client with base endpoint: {base_endpoint}")
                     
                     # Get token provider for AI Foundry
                     credential = AsyncDefaultAzureCredential()
                     token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
                     
                     async with AsyncAzureOpenAI(
-                        azure_endpoint=config.foundry_endpoint,
+                        azure_endpoint=base_endpoint,
                         azure_ad_token_provider=token_provider,
-                        api_version="2024-05-01-preview"
+                        api_version="2024-08-01-preview"
                     ) as ai_client:
                         
-                        logger.info(f"Calling AI model: {config.foundry_model_deployment}")
+                        # Get or create session history
+                        session_id = message.session_id or str(uuid.uuid4())
+                        if session_id not in conversation_history:
+                            conversation_history[session_id] = []
+                        
+                        # Build messages with conversation history
+                        messages = [
+                            {"role": "system", "content": "You are a helpful legal document assistant. Answer questions using ONLY the exact information from the provided documents. Rules:\n1. NEVER infer, calculate, or assume information not explicitly stated\n2. If information is not in the documents, respond: 'This information is not provided in the documents.'\n3. Be CONSISTENT - if you said information isn't available, don't provide it in follow-up questions\n4. Quote EXACT values (numbers, dates, names) from documents\n5. At the END, add: <!-- SOURCES: [document numbers you used] -->\n\nExample: If asked 'What is the rate?' and the document says 'Hourly Rate: $350/hour', respond with the exact rate. If the rate is not explicitly stated, say it's not provided.\n\nProvide clean HTML without ```html blocks."}
+                        ]
+                        
+                        # Add conversation history (last 5 turns to keep context manageable)
+                        for hist_msg in conversation_history[session_id][-5:]:
+                            messages.append(hist_msg)
+                        
+                        # Add current query with document context
+                        messages.append({
+                            "role": "user",
+                            "content": f"Based on these documents:\n\n{context_text}\n\nUser question: {message.message}\n\nProvide a clear, well-formatted HTML response using ONLY the exact information from the documents above. Do not guess or infer anything. If the specific information requested is not explicitly stated, say so. At the END of your response, add '<!-- SOURCES: [document numbers] -->' to indicate which documents you used. Return ONLY the HTML, no markdown code blocks."
+                        })
+                        
+                        logger.info(f"Calling AI model: {config.foundry_model_deployment} (with {len(conversation_history[session_id])} history messages)")
                         ai_response = await ai_client.chat.completions.create(
                             model=config.foundry_model_deployment,
-                            messages=[
-                                {"role": "system", "content": "You are a helpful legal document assistant. Answer questions based on the provided document context. Format your response in HTML with proper styling. Use <div>, <p>, <strong>, <ul>, <li> tags as needed. Preserve important formatting like dates, amounts, and legal terms."},
-                                {"role": "user", "content": f"Based on these documents:\n\n{context_text}\n\nUser question: {message.message}\n\nProvide a clear, well-formatted HTML response that directly answers the question."}
-                            ],
-                            temperature=0.7,
-                            max_tokens=1000
+                            messages=messages,
+                            temperature=0.1,  # Very low for maximum precision
+                            max_tokens=2000  # Increased to handle larger context windows
                         )
                         
                         logger.info("✓ AI model response received")
                         ai_answer = ai_response.choices[0].message.content
+                        
+                        # Strip markdown code blocks if present
+                        import re
+                        ai_answer = re.sub(r'^```html\s*', '', ai_answer, flags=re.MULTILINE)
+                        ai_answer = re.sub(r'\s*```$', '', ai_answer, flags=re.MULTILINE)
+                        ai_answer = ai_answer.strip()
+                        
+                        # Extract source document numbers from the AI response
+                        source_pattern = r'<!-- SOURCES: ([0-9,\s]+) -->'
+                        source_match = re.search(source_pattern, ai_answer)
+                        used_doc_indices = []
+                        if source_match:
+                            # Extract and parse document numbers
+                            doc_nums_str = source_match.group(1)
+                            used_doc_indices = [int(num.strip()) - 1 for num in doc_nums_str.split(',') if num.strip().isdigit()]
+                            # Remove the source comment from the answer
+                            ai_answer = re.sub(source_pattern, '', ai_answer).strip()
+                        
+                        # Store conversation history (without the source comment)
+                        conversation_history[session_id].append({"role": "user", "content": message.message})
+                        conversation_history[session_id].append({"role": "assistant", "content": ai_answer})
+                        
+                        # Limit history size (keep last 10 messages = 5 turns)
+                        if len(conversation_history[session_id]) > 10:
+                            conversation_history[session_id] = conversation_history[session_id][-10:]
+                        
+                        # Check if the AI says the information is not found
+                        not_found_patterns = [
+                            r'not mentioned',
+                            r'not found',
+                            r'no information',
+                            r'does not contain',
+                            r'is not in',
+                            r'not included',
+                            r'not present',
+                            r'doesn\'t mention',
+                            r'no reference to'
+                        ]
+                        answer_lower = ai_answer.lower()
+                        info_not_found = any(re.search(pattern, answer_lower) for pattern in not_found_patterns)
                         
                         # Format the final response with sources
                         response = f"<div style='font-family: system-ui, -apple-system, sans-serif;'>"
@@ -1019,13 +1125,21 @@ async def chat(message: ChatMessage):
                         response += ai_answer
                         response += "</div>"
                         
-                        # Add source documents
-                        response += f"<div style='margin-top: 20px;'><strong style='color: #666;'>📚 Sources ({len(context_docs)} documents):</strong></div>"
-                        for doc in context_docs:
-                            response += f"<div style='margin: 8px 0; padding: 8px; background: #f8f9fa; border-radius: 4px; font-size: 13px; color: #555;'>"
-                            response += f"📄 {doc['title']}"
-                            response += "</div>"
+                        # Only add source documents if information was found
+                        if not info_not_found:
+                            # Filter to only show documents that were actually used
+                            sources_to_show = context_docs if not used_doc_indices else [context_docs[i] for i in used_doc_indices if i < len(context_docs)]
+                            
+                            if sources_to_show:
+                                response += f"<div style='margin-top: 20px;'><strong style='color: #666;'>📚 Sources ({len(sources_to_show)} document{'s' if len(sources_to_show) > 1 else ''}):</strong></div>"
+                                for doc in sources_to_show:
+                                    response += f"<div style='margin: 8px 0; padding: 8px; background: #f8f9fa; border-radius: 4px; font-size: 13px; color: #555;'>"
+                                    response += f"📄 {doc['title']}"
+                                    response += "</div>"
                         response += "</div>"
+                        
+                        # Return response with session_id
+                        return ChatResponse(response=response, session_id=session_id)
                         
                 except Exception as ai_error:
                     logger.error(f"AI model error: {ai_error}", exc_info=True)
@@ -1049,7 +1163,6 @@ async def chat(message: ChatMessage):
                 response += "</div>"
             
             session_id = message.session_id or str(uuid.uuid4())
-            
             return ChatResponse(response=response, session_id=session_id)
             
         finally:
