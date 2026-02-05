@@ -927,16 +927,29 @@ async def chat(message: ChatMessage):
                 # Boost score if query terms appear in the content (exact match bonus)
                 query_lower = message.message.lower()
                 content_lower = content.lower()
+                original_content = content  # Keep original for case-sensitive matching
                 
-                # Check for exact phrase matches (e.g., invoice numbers, names)
-                query_words = query_lower.split()
-                exact_matches = sum(1 for word in query_words if len(word) > 3 and word in content_lower)
-                match_ratio = exact_matches / len(query_words) if query_words else 0
+                # Check for exact phrase matches (e.g., invoice numbers with hyphens)
+                # First, check for case-sensitive exact matches (invoice numbers, IDs)
+                import re
+                # Find patterns like invoice numbers: XXX-XXXX-XXX
+                invoice_patterns = re.findall(r'\b[A-Z]{2,}-\d{4}-\d+\b', message.message)
+                exact_id_matches = sum(1 for pattern in invoice_patterns if pattern in original_content)
                 
-                # Boost score based on exact matches
-                boosted_score = score * (1 + match_ratio * 2)  # Up to 3x boost for perfect matches
+                # Then check for regular word matches (longer words only to avoid common terms)
+                query_words = [w for w in query_lower.split() if len(w) > 4]  # Only words longer than 4 chars
+                word_matches = sum(1 for word in query_words if word in content_lower)
                 
-                logger.info(f"Result {result_count}: {title} - Original Score: {score:.4f}, Matches: {exact_matches}/{len(query_words)}, Boosted: {boosted_score:.4f}")
+                # Calculate total matches
+                total_matches = exact_id_matches * 3 + word_matches  # ID matches worth 3x more
+                total_possible = len(invoice_patterns) * 3 + len(query_words)
+                match_ratio = total_matches / total_possible if total_possible > 0 else 0
+                
+                # Boost score based on matches - up to 5x boost for perfect ID matches
+                boost_multiplier = 1 + (match_ratio * 4)
+                boosted_score = score * boost_multiplier
+                
+                logger.info(f"Result {result_count}: {title} - Original: {score:.4f}, ID matches: {exact_id_matches}/{len(invoice_patterns)}, Word matches: {word_matches}/{len(query_words)}, Boosted: {boosted_score:.4f}")
                 
                 # Track the highest boosted score
                 if result_count == 1:
