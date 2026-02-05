@@ -983,46 +983,28 @@ async def chat(message: ChatMessage):
                 
                 # Call the AI model
                 try:
-                    logger.info("Importing AI inference client...")
-                    from azure.ai.inference.aio import ChatCompletionsClient
-                    from azure.ai.inference.models import SystemMessage, UserMessage
-                    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
-                    from azure.core.credentials import AccessToken
+                    logger.info("Importing OpenAI client for AI Foundry...")
+                    from openai import AsyncAzureOpenAI
+                    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential, get_bearer_token_provider
                     
-                    logger.info(f"Creating AI client with endpoint: {config.foundry_endpoint}")
+                    logger.info(f"Creating OpenAI client with endpoint: {config.foundry_endpoint}")
                     
-                    # Get token with correct scope for AI Foundry
-                    base_credential = AsyncDefaultAzureCredential()
-                    token = await base_credential.get_token("https://ai.azure.com/.default")
-                    logger.info(f"✓ Got token with AI Foundry scope (https://ai.azure.com)")
+                    # Get token provider for AI Foundry
+                    credential = AsyncDefaultAzureCredential()
+                    token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
                     
-                    # Create a credential wrapper that returns the token
-                    class TokenCredential:
-                        def __init__(self, token):
-                            self.token = token
-                        
-                        async def get_token(self, *scopes, **kwargs):
-                            return self.token
-                        
-                        async def __aenter__(self):
-                            return self
-                        
-                        async def __aexit__(self, *args):
-                            pass
-                    
-                    credential = TokenCredential(token)
-                    async with ChatCompletionsClient(
-                        endpoint=config.foundry_endpoint,
-                        credential=credential,
-                        api_version="2024-05-01-preview"  # Use compatible API version for AI Foundry
+                    async with AsyncAzureOpenAI(
+                        azure_endpoint=config.foundry_endpoint,
+                        azure_ad_token_provider=token_provider,
+                        api_version="2024-05-01-preview"
                     ) as ai_client:
                         
                         logger.info(f"Calling AI model: {config.foundry_model_deployment}")
-                        ai_response = await ai_client.complete(
+                        ai_response = await ai_client.chat.completions.create(
                             model=config.foundry_model_deployment,
                             messages=[
-                                SystemMessage(content="You are a helpful legal document assistant. Answer questions based on the provided document context. Format your response in HTML with proper styling. Use <div>, <p>, <strong>, <ul>, <li> tags as needed. Preserve important formatting like dates, amounts, and legal terms."),
-                                UserMessage(content=f"Based on these documents:\n\n{context_text}\n\nUser question: {message.message}\n\nProvide a clear, well-formatted HTML response that directly answers the question.")
+                                {"role": "system", "content": "You are a helpful legal document assistant. Answer questions based on the provided document context. Format your response in HTML with proper styling. Use <div>, <p>, <strong>, <ul>, <li> tags as needed. Preserve important formatting like dates, amounts, and legal terms."},
+                                {"role": "user", "content": f"Based on these documents:\n\n{context_text}\n\nUser question: {message.message}\n\nProvide a clear, well-formatted HTML response that directly answers the question."}
                             ],
                             temperature=0.7,
                             max_tokens=1000
