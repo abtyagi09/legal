@@ -922,26 +922,39 @@ async def chat(message: ChatMessage):
                 result_count += 1
                 content = result.get('content', '')
                 score = result.get('@search.score', 0)
+                title = result.get('title', 'Untitled')
                 
-                logger.info(f"Result {result_count}: {result.get('title', 'Untitled')} - Score: {score:.4f}")
+                # Boost score if query terms appear in the content (exact match bonus)
+                query_lower = user_message.lower()
+                content_lower = content.lower()
                 
-                # Track the highest score
+                # Check for exact phrase matches (e.g., invoice numbers, names)
+                query_words = query_lower.split()
+                exact_matches = sum(1 for word in query_words if len(word) > 3 and word in content_lower)
+                match_ratio = exact_matches / len(query_words) if query_words else 0
+                
+                # Boost score based on exact matches
+                boosted_score = score * (1 + match_ratio * 2)  # Up to 3x boost for perfect matches
+                
+                logger.info(f"Result {result_count}: {title} - Original Score: {score:.4f}, Matches: {exact_matches}/{len(query_words)}, Boosted: {boosted_score:.4f}")
+                
+                # Track the highest boosted score
                 if result_count == 1:
-                    top_score = score
+                    top_score = boosted_score
                 
-                # If we have multiple results, only include results within 20% of the top score
-                # This filters out less relevant matches
+                # If we have multiple results, only include results within 50% of the top boosted score
+                # This is more aggressive filtering for better precision
                 if result_count > 1 and top_score > 0:
-                    score_ratio = score / top_score
-                    if score_ratio < 0.80:
-                        logger.info(f"Filtering out result: {result.get('title', 'Untitled')} (score {score:.4f} is {score_ratio:.1%} of top score {top_score:.4f})")
+                    score_ratio = boosted_score / top_score
+                    if score_ratio < 0.50:
+                        logger.info(f"Filtering out: {title} (boosted score {boosted_score:.4f} is {score_ratio:.1%} of top {top_score:.4f})")
                         continue
                 
                 if content:
                     context_docs.append({
-                        'title': result.get('title', 'Untitled'),
+                        'title': title,
                         'content': content[:1500],
-                        'score': score
+                        'score': boosted_score
                     })
             
             logger.info(f"Hybrid search found {result_count} results, using {len(context_docs)} after relevance filtering")
