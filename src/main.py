@@ -569,19 +569,36 @@ async def health():
 async def generate_embedding(text: str) -> List[float]:
     """Generate embedding vector for text using Azure OpenAI"""
     try:
-        if not config.openai_endpoint or not config.openai_api_key:
-            logger.warning("Azure OpenAI not configured, skipping embedding generation")
+        if not config.openai_endpoint:
+            logger.warning("Azure OpenAI endpoint not configured, skipping embedding generation")
             return []
         
-        # Create OpenAI client
-        client = AsyncAzureOpenAI(
-            azure_endpoint=config.openai_endpoint,
-            api_key=config.openai_api_key,
-            api_version="2024-02-01"
-        )
+        # Create OpenAI client with managed identity or API key
+        from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+        from azure.core.credentials import AzureKeyCredential
+        
+        if config.openai_api_key:
+            # Use API key if provided
+            client = AsyncAzureOpenAI(
+                azure_endpoint=config.openai_endpoint,
+                api_key=config.openai_api_key,
+                api_version="2024-02-01"
+            )
+            logger.info("Using Azure OpenAI with API key")
+        else:
+            # Use managed identity
+            credential = AsyncDefaultAzureCredential()
+            token_response = await credential.get_token("https://cognitiveservices.azure.com/.default")
+            
+            client = AsyncAzureOpenAI(
+                azure_endpoint=config.openai_endpoint,
+                azure_ad_token=token_response.token,
+                api_version="2024-02-01"
+            )
+            logger.info("Using Azure OpenAI with managed identity")
         
         # Generate embedding
-        # Truncate text to avoid token limits (max ~8000 tokens for ada-002)
+        # Truncate text to avoid token limits (max ~8000 tokens for text-embedding-3-small)
         text_for_embedding = text[:8000] if len(text) > 8000 else text
         
         response = await client.embeddings.create(
@@ -814,7 +831,7 @@ async def chat(message: ChatMessage):
                 vector_queries.append(
                     VectorizedQuery(
                         vector=query_vector,
-                        k_nearest_neighbors=3,
+                        k_nearest_neighbors=10,  # Get more candidates for better filtering
                         fields="content_vector"
                     )
                 )
@@ -827,7 +844,9 @@ async def chat(message: ChatMessage):
                 search_text=message.message,
                 vector_queries=vector_queries if vector_queries else None,
                 select=["title", "content", "file_name"],
-                top=3
+                query_type="semantic" if not vector_queries else "simple",  # Use semantic ranking if no vectors
+                semantic_configuration_name="default" if not vector_queries else None,
+                top=5  # Get top 5 results for better context
             )
             
             context_docs = []
