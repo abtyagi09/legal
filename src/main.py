@@ -1013,7 +1013,8 @@ async def chat(message: ChatMessage):
                     credential = TokenCredential(token)
                     async with ChatCompletionsClient(
                         endpoint=config.foundry_endpoint,
-                        credential=credential
+                        credential=credential,
+                        api_version="2024-05-01-preview"  # Use compatible API version for AI Foundry
                     ) as ai_client:
                         
                         logger.info(f"Calling AI model: {config.foundry_model_deployment}")
