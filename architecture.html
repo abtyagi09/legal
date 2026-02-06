@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Legal Agent Architecture</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 40px;
+            font-size: 16px;
+        }
+        
+        .architecture {
+            width: 100%;
+            height: 800px;
+            position: relative;
+        }
+        
+        .layer {
+            position: absolute;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-around;
+            align-items: flex-start;
+            gap: 20px;
+            padding: 0 20px;
+        }
+        
+        .layer-label {
+            position: absolute;
+            left: -80px;
+            top: 50%;
+            transform: translateY(-50%) rotate(-90deg);
+            font-weight: bold;
+            color: #34495e;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        .component {
+            background: white;
+            border: 3px solid;
+            border-radius: 12px;
+            padding: 20px;
+            min-width: 180px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .component:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        }
+        
+        .component-icon {
+            font-size: 40px;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        
+        .component-title {
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+        
+        .component-desc {
+            font-size: 12px;
+            color: #7f8c8d;
+            text-align: center;
+            line-height: 1.4;
+        }
+        
+        .component-items {
+            margin-top: 10px;
+            font-size: 11px;
+            color: #95a5a6;
+        }
+        
+        .component-items li {
+            margin: 4px 0;
+            list-style-position: inside;
+        }
+        
+        /* Layer positioning */
+        .layer-1 { top: 20px; }
+        .layer-2 { top: 180px; }
+        .layer-3 { top: 340px; }
+        .layer-4 { top: 500px; }
+        .layer-5 { top: 660px; }
+        
+        /* Color schemes */
+        .client-layer .component { border-color: #3498db; background: #ebf5fb; }
+        .api-layer .component { border-color: #2ecc71; background: #eafaf1; }
+        .agent-layer .component { border-color: #9b59b6; background: #f4ecf7; }
+        .tools-layer .component { border-color: #e74c3c; background: #fadbd8; }
+        .data-layer .component { border-color: #f39c12; background: #fef5e7; }
+        
+        /* Connection lines */
+        svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        .component {
+            z-index: 2;
+        }
+        
+        .arrow {
+            stroke-width: 2;
+            fill: none;
+            opacity: 0.3;
+        }
+        
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        }
+        
+        .legend-box {
+            width: 30px;
+            height: 20px;
+            border: 2px solid;
+            border-radius: 4px;
+        }
+        
+        .tech-stack {
+            margin-top: 40px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .tech-stack h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .tech-item {
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #3498db;
+        }
+        
+        .tech-item strong {
+            display: block;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        
+        .tech-item span {
+            font-size: 13px;
+            color: #7f8c8d;
+        }
+        
+        @media (max-width: 1200px) {
+            .architecture {
+                height: 1000px;
+            }
+            .component {
+                min-width: 150px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏛️ Legal Document Agent Architecture</h1>
+        <p class="subtitle">Microsoft Agent Framework • Azure AI Foundry • Container Apps</p>
+        
+        <div class="architecture">
+            <svg id="connections"></svg>
+            
+            <!-- Layer 1: Client -->
+            <div class="layer layer-1 client-layer">
+                <div class="component" data-id="ui">
+                    <div class="component-icon">🖥️</div>
+                    <div class="component-title">Web UI</div>
+                    <div class="component-desc">React-style interface with real-time chat</div>
+                    <ul class="component-items">
+                        <li>Document upload</li>
+                        <li>Chat interface</li>
+                        <li>Settings panel</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Layer 2: API Gateway -->
+            <div class="layer layer-2 api-layer">
+                <div class="component" data-id="fastapi">
+                    <div class="component-icon">⚡</div>
+                    <div class="component-title">FastAPI Server</div>
+                    <div class="component-desc">REST API endpoints with streaming</div>
+                    <ul class="component-items">
+                        <li>/api/chat</li>
+                        <li>/api/upload</li>
+                        <li>/api/search</li>
+                        <li>/api/toolinfo</li>
+                    </ul>
+                </div>
+                
+                <div class="component" data-id="auth">
+                    <div class="component-icon">🔐</div>
+                    <div class="component-title">Authentication</div>
+                    <div class="component-desc">Azure AD Easy Auth</div>
+                    <ul class="component-items">
+                        <li>User identification</li>
+                        <li>Document security</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Layer 3: Agent Core -->
+            <div class="layer layer-3 agent-layer">
+                <div class="component" data-id="agent">
+                    <div class="component-icon">🤖</div>
+                    <div class="component-title">Legal Agent</div>
+                    <div class="component-desc">LLM orchestration & reasoning</div>
+                    <ul class="component-items">
+                        <li>GPT-4o-mini</li>
+                        <li>Function calling</li>
+                        <li>Context management</li>
+                    </ul>
+                </div>
+                
+                <div class="component" data-id="search">
+                    <div class="component-icon">🔍</div>
+                    <div class="component-title">Search Tool</div>
+                    <div class="component-desc">Vector & keyword search</div>
+                    <ul class="component-items">
+                        <li>Semantic search</li>
+                        <li>Hybrid queries</li>
+                    </ul>
+                </div>
+                
+                <div class="component" data-id="docintel">
+                    <div class="component-icon">📄</div>
+                    <div class="component-title">Doc Intelligence</div>
+                    <div class="component-desc">PDF/Image text extraction</div>
+                    <ul class="component-items">
+                        <li>OCR processing</li>
+                        <li>Layout analysis</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Layer 4: Integration Tools -->
+            <div class="layer layer-4 tools-layer">
+                <div class="component" data-id="dbtools">
+                    <div class="component-icon">🗄️</div>
+                    <div class="component-title">Database Tools</div>
+                    <div class="component-desc">Case & invoice management</div>
+                    <ul class="component-items">
+                        <li>8 async methods</li>
+                        <li>Direct SQLite</li>
+                    </ul>
+                </div>
+                
+                <div class="component" data-id="integration">
+                    <div class="component-icon">🔗</div>
+                    <div class="component-title">Integration Actions</div>
+                    <div class="component-desc">14 external tools</div>
+                    <ul class="component-items">
+                        <li>API calls</li>
+                        <li>Notifications</li>
+                        <li>Invoice generation</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Layer 5: Data & External -->
+            <div class="layer layer-5 data-layer">
+                <div class="component" data-id="sqlite">
+                    <div class="component-icon">💾</div>
+                    <div class="component-title">SQLite DB</div>
+                    <div class="component-desc">Embedded database</div>
+                    <ul class="component-items">
+                        <li>7 tables</li>
+                        <li>84KB size</li>
+                    </ul>
+                </div>
+                
+                <div class="component" data-id="aisearch">
+                    <div class="component-icon">☁️</div>
+                    <div class="component-title">Azure AI Search</div>
+                    <div class="component-desc">Document index</div>
+                    <ul class="component-items">
+                        <li>Vector search</li>
+                        <li>3072-dim embeddings</li>
+                    </ul>
+                </div>
+                
+                <div class="component" data-id="api-external">
+                    <div class="component-icon">🌐</div>
+                    <div class="component-title">External APIs</div>
+                    <div class="component-desc">Mock legal API</div>
+                    <ul class="component-items">
+                        <li>REST endpoints</li>
+                        <li>Fallback source</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-box" style="border-color: #3498db; background: #ebf5fb;"></div>
+                <span>Client Layer</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="border-color: #2ecc71; background: #eafaf1;"></div>
+                <span>API Layer</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="border-color: #9b59b6; background: #f4ecf7;"></div>
+                <span>Agent Layer</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="border-color: #e74c3c; background: #fadbd8;"></div>
+                <span>Tools Layer</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-box" style="border-color: #f39c12; background: #fef5e7;"></div>
+                <span>Data Layer</span>
+            </div>
+        </div>
+        
+        <div class="tech-stack">
+            <h3>🛠️ Technology Stack</h3>
+            <div class="tech-grid">
+                <div class="tech-item">
+                    <strong>Frontend</strong>
+                    <span>HTML5, CSS3, Vanilla JavaScript</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Backend</strong>
+                    <span>Python 3.11, FastAPI, Uvicorn</span>
+                </div>
+                <div class="tech-item">
+                    <strong>AI/ML</strong>
+                    <span>Azure AI Foundry, GPT-4o-mini, Text Embeddings</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Search</strong>
+                    <span>Azure AI Search, Vector Search</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Document Processing</strong>
+                    <span>Azure Document Intelligence, PyPDF2</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Database</strong>
+                    <span>SQLite3 (embedded), 7 normalized tables</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Authentication</strong>
+                    <span>Azure AD, Easy Auth, Managed Identity</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Hosting</strong>
+                    <span>Azure Container Apps, Docker, ACR</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Infrastructure</strong>
+                    <span>Bicep (IaC), Azure Key Vault, App Insights</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Draw connection lines between components
+        function drawConnections() {
+            const svg = document.getElementById('connections');
+            const connections = [
+                // UI to FastAPI
+                { from: 'ui', to: 'fastapi', color: '#3498db' },
+                
+                // FastAPI to Agent components
+                { from: 'fastapi', to: 'agent', color: '#2ecc71' },
+                { from: 'fastapi', to: 'auth', color: '#2ecc71' },
+                
+                // Agent to Tools
+                { from: 'agent', to: 'search', color: '#9b59b6' },
+                { from: 'agent', to: 'docintel', color: '#9b59b6' },
+                { from: 'agent', to: 'dbtools', color: '#9b59b6' },
+                { from: 'agent', to: 'integration', color: '#9b59b6' },
+                
+                // Tools to Data
+                { from: 'dbtools', to: 'sqlite', color: '#e74c3c' },
+                { from: 'search', to: 'aisearch', color: '#e74c3c' },
+                { from: 'integration', to: 'api-external', color: '#e74c3c' },
+                { from: 'docintel', to: 'aisearch', color: '#e74c3c' }
+            ];
+            
+            connections.forEach(conn => {
+                const fromEl = document.querySelector(`[data-id="${conn.from}"]`);
+                const toEl = document.querySelector(`[data-id="${conn.to}"]`);
+                
+                if (!fromEl || !toEl) return;
+                
+                const fromRect = fromEl.getBoundingClientRect();
+                const toRect = toEl.getBoundingClientRect();
+                const containerRect = document.querySelector('.architecture').getBoundingClientRect();
+                
+                const x1 = fromRect.left + fromRect.width / 2 - containerRect.left;
+                const y1 = fromRect.bottom - containerRect.top;
+                const x2 = toRect.left + toRect.width / 2 - containerRect.left;
+                const y2 = toRect.top - containerRect.top;
+                
+                // Create curved path
+                const midY = (y1 + y2) / 2;
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', `M ${x1} ${y1} Q ${x1} ${midY} ${x2} ${y2}`);
+                path.setAttribute('class', 'arrow');
+                path.setAttribute('stroke', conn.color);
+                path.setAttribute('marker-end', 'url(#arrowhead)');
+                
+                svg.appendChild(path);
+            });
+            
+            // Add arrowhead marker
+            const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+            marker.setAttribute('id', 'arrowhead');
+            marker.setAttribute('markerWidth', '10');
+            marker.setAttribute('markerHeight', '10');
+            marker.setAttribute('refX', '5');
+            marker.setAttribute('refY', '3');
+            marker.setAttribute('orient', 'auto');
+            
+            const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+            polygon.setAttribute('points', '0 0, 10 3, 0 6');
+            polygon.setAttribute('fill', '#95a5a6');
+            
+            marker.appendChild(polygon);
+            defs.appendChild(marker);
+            svg.appendChild(defs);
+        }
+        
+        // Draw connections after page load
+        window.addEventListener('load', () => {
+            setTimeout(drawConnections, 100);
+        });
+        
+        // Redraw on window resize
+        window.addEventListener('resize', () => {
+            const svg = document.getElementById('connections');
+            svg.innerHTML = '';
+            drawConnections();
+        });
+    </script>
+</body>
+</html>

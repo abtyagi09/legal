@@ -1,0 +1,16 @@
+# Dockerfile for Mock Legal API
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir fastapi uvicorn[standard] pydantic
+
+# Copy the mock API
+COPY mock_legal_api.py .
+
+# Expose port
+EXPOSE 3001
+
+# Run the API
+CMD ["python", "mock_legal_api.py"]

@@ -4,15 +4,73 @@ An intelligent web application for legal document management with AI-powered sea
 
 ## Features
 
+### 📄 Document Management
 - **Multi-Format Document Upload**: Supports PDF, DOCX, DOC, images (JPG, PNG, BMP, TIFF), and text files
-- **Intelligent Text Extraction**: Azure Document Intelligence with managed identity authentication
-- **AI-Powered Q&A**: GPT-5 model provides contextual answers from your documents
-- **Semantic Search**: Azure AI Search indexes and retrieves relevant document content
-- **Modern Web Interface**: Drag-and-drop upload, real-time chat, and formatted responses
+- **Intelligent Text Extraction**: Azure Document Intelligence with layout model for better table extraction
+- **Document-Level Security**: Per-user access control with toggleable security settings
+- **Owner-Based Permissions**: Only document uploaders can delete their own documents
+
+### 🤖 AI-Powered Features
+- **AI-Powered Q&A**: GPT-4o-mini model (AI Foundry) provides contextual answers from your documents
+- **Hybrid Search**: Combines keyword + vector embeddings for intelligent document retrieval
+- **Semantic Search**: Azure AI Search with custom relevance boosting and smart pattern matching
+- **Conversation History**: Maintains context across chat sessions
+- **Natural Language Formatting**: Tool results formatted as human-readable text with tables
+
+### 🗄️ Database & Integration
+- **SQLite Database**: Embedded database with 7 normalized tables for cases, invoices, attorneys
+- **8 Database Tools**: Direct SQLite access for case management, invoicing, and attorney info
+- **14 Integration Tools**: External API calls, notifications, invoice generation, case management
+- **Configurable Tool Settings**: Enable/disable individual tools via settings panel
+- **Data Source Selection**: Choose between database, API, or auto (database-first with fallback)
+
+### 🔧 Configuration & Customization
+- **Settings Panel**: Comprehensive configuration interface for all agent features
+- **API Endpoint Configuration**: Set custom legal API URLs
+- **Tool Toggles**: Enable/disable specific tools by category (Case Management, Invoices, Communication, etc.)
+- **Security Controls**: Toggle document security and function calling
+- **Persistent Settings**: All configurations saved to browser localStorage
+
+### 🌐 User Interface
+- **Modern Web Interface**: Drag-and-drop upload, real-time chat, formatted HTML responses
+- **Interactive Architecture Diagram**: Visual system architecture with animated connections
+- **Azure AD Authentication**: User identity management and security
+- **Responsive Design**: Works on desktop and mobile devices
+
+### ☁️ Infrastructure & Deployment
 - **Secure & Scalable**: Deployed on Azure Container Apps with managed identities
 - **Production-Ready**: Infrastructure as Code with Bicep, containerized deployment
+- **Docker Support**: Multi-stage builds for optimized container images
+- **Health Checks**: Automated monitoring and restart capabilities
 
 ## Architecture
+
+### 🏛️ Visual Architecture Diagram
+
+**[View Interactive Architecture Diagram →](https://ca-7alsezpsk27uq.wittymoss-05f49619.eastus2.azurecontainerapps.io/architecture)**
+
+![Legal Document Agent Architecture](docs/architecture-diagram.png)
+
+Access the live, interactive architecture visualization showing:
+- 5-layer system architecture with animated connections
+- 10+ core components with detailed descriptions
+- 14 integration tools organized by category
+- Complete technology stack
+- Data flow visualization
+
+**Key Components:**
+- **User Interface**: Web App + Chatbot for document upload & queries
+- **LegalDocAgent**: FastAPI Backend with request orchestration
+- **Orchestration Logic**: Microsoft Agent Framework for AI coordination
+- **Azure Services**:
+  - Azure OpenAI (LLM + AI Analysis)
+  - Azure Form Recognizer (Document Extraction)
+  - Azure Cognitive Search (Indexing & Retrieval)
+  - Azure AI Search (Semantic + Vector Search)
+- **Agent Outputs**:
+  - Legal Insights (Clause Extraction, Summarization, Q&A)
+  - Compliance & Alerts (Risk Analysis, Deadline Reminders, Notifications)
+  - External API Integration (E-Signature, CRM System)
 
 ### System Architecture
 
@@ -58,24 +116,41 @@ An intelligent web application for legal document management with AI-powered sea
    │   Intelligence     │          │                       │
    │                    │          │  ┌─────────────────┐  │
    │  - Managed Identity│          │  │ legal-documents │  │
-   │  - OCR & Text      │          │  │     -index      │  │
-   │    Extraction      │          │  │                 │  │
-   │  - PDF, Images,    │          │  │ Fields:         │  │
-   │    DOCX Support    │          │  │ - id            │  │
-   └────────────────────┘          │  │ - title         │  │
-                                   │  │ - content       │  │
+   │  - Layout Model    │          │  │     -index      │  │
+   │  - OCR & Text      │          │  │                 │  │
+   │    Extraction      │          │  │ Fields:         │  │
+   │  - PDF, Images,    │          │  │ - id            │  │
+   │    DOCX Support    │          │  │ - title         │  │
+   └────────────────────┘          │  │ - content       │  │
+                                   │  │ - content_vector│  │
                                    │  │ - file_name     │  │
                                    │  │ - upload_date   │  │
+                                   │  │ - owner_id      │  │
+                                   │  │ - allowed_users │  │
                                    │  └─────────────────┘  │
             ┌──────────────────────┴───────────────────────┘
             │
    ┌────────▼──────────┐
    │  Azure AI Foundry │
    │                   │
-   │  - GPT-5 Model    │
+   │  - GPT-4o-mini    │
    │  - Managed Identity│
    │  - Context-aware  │
    │    Responses      │
+   │  - Temp: 0.1      │
+   │  - Max tokens: 2K │
+   └───────────────────┘
+       │
+       │ Also uses:
+       ▼
+   ┌───────────────────┐
+   │  Azure OpenAI     │
+   │                   │
+   │  - text-embedding │
+   │    -3-small       │
+   │  - 1536 dims      │
+   │  - For vector     │
+   │    search         │
    └───────────────────┘
 ```
 
@@ -185,31 +260,82 @@ An intelligent web application for legal document management with AI-powered sea
 - Real-time chat interface
 
 **Backend**
-- **FastAPI**: Modern Python web framework
+- **FastAPI**: Modern Python web framework with Azure AD integration
 - **Python 3.11**: Async/await support
 - **Uvicorn**: ASGI server
 - **Azure SDK**: Identity, Search, AI, Document Intelligence
+- **OpenAI SDK**: For embeddings (text-embedding-3-small) and AI Foundry models
 
 **Azure Services**
-- **Azure Container Apps**: Managed containers with auto-scaling
-- **Azure Document Intelligence**: OCR and text extraction (managed identity)
-- **Azure AI Search**: Semantic search and indexing
-- **Azure AI Foundry**: GPT-5 model deployment (managed identity)
+- **Azure Container Apps**: Managed containers with Easy Auth
+- **Azure Document Intelligence**: Layout model for better table extraction (managed identity)
+- **Azure AI Search**: Hybrid search (keyword + vector) with semantic ranking
+- **Azure AI Foundry**: GPT-4o-mini model deployment (managed identity)
+- **Azure OpenAI**: Text embeddings for vector search
 - **Azure Container Registry**: Private container images
 - **Azure Key Vault**: Secrets management
 - **Application Insights**: Monitoring and logging
 
 **Security**
+- Azure AD authentication via Container Apps Easy Auth
+- Document-level security with per-user access control
+- Owner-based deletion permissions
 - Managed identities (no API keys in code)
 - Role-based access control (RBAC)
+- OData security filters on search queries
 - HTTPS only
 - Environment variable configuration
+
+## Security Features
+
+### Document-Level Security
+
+The application implements comprehensive document-level security:
+
+1. **User Authentication**: Azure AD authentication via Container Apps Easy Auth
+   - Automatic user identity extraction from `X-MS-CLIENT-PRINCIPAL` header
+   - Support for multiple Azure AD claim types (`oid`, `sub`, `objectidentifier`)
+
+2. **Per-User Access Control**: Each document is tagged with owner and allowed users
+   ```json
+   {
+     "owner_id": "ca168720-f766-438d-a25c-e7d1c161daec",
+     "allowed_users": ["ca168720-f766-438d-a25c-e7d1c161daec"]
+   }
+   ```
+
+3. **Security Filtering**: OData filters on all search operations
+   ```python
+   filter="allowed_users/any(u: u eq '{user_id}')"
+   ```
+
+4. **Toggleable Security**: Users can enable/disable security via UI
+   - **Enabled** (default): Users see only their own documents
+   - **Disabled**: Users see all documents (for administrative scenarios)
+   - Setting persisted in browser localStorage
+
+5. **Owner-Based Permissions**: 
+   - Only document uploaders can delete their documents
+   - Delete button automatically disabled for non-owners
+   - Tooltip indicates permission status: "Only the uploader can delete this document"
+
+6. **Backend Verification**: All operations verify ownership server-side
+   - Upload: Captures user ID and sets `owner_id` and `allowed_users` fields
+   - Delete: Verifies requesting user matches `owner_id` before deletion
+   - Search: Applies user-based filters based on security toggle state
+
+### UI Security Controls
+
+- **User Info Display**: Shows authenticated user name and ID
+- **Security Toggle**: Checkbox to enable/disable document-level security
+- **Visual Feedback**: Disabled buttons with tooltips for restricted actions
+- **Sign Out**: Easy access to Azure AD sign-out
 
 ## Prerequisites
 
 - Python 3.10+
 - Azure Subscription
-- Microsoft Foundry project with deployed GPT-5 model
+- Microsoft Foundry (AI Foundry) project with deployed model (GPT-4o-mini recommended)
 - Azure AI Search service
 - Azure Document Intelligence service
 - Docker (for containerization)
@@ -530,21 +656,84 @@ response = await agent.run(
 )
 ```
 
+## Database & Tools
+
+### SQLite Database Schema
+
+The agent includes an embedded SQLite database with 7 normalized tables:
+
+- **attorneys**: Attorney profiles with specialties, rates, availability
+- **clients**: Client information and contact details
+- **cases**: Legal case records with status, type, and dates
+- **invoices**: Invoice headers with totals and status
+- **invoice_items**: Line items for invoices
+- **legal_rates**: Service type rates and descriptions
+- **case_documents**: Links cases to uploaded documents
+
+**Database File**: `legal_cases.db` (84KB, included in container)
+
+### Available Tools
+
+#### Database Tools (8 methods)
+- `search_cases_db`: Search cases by status, type, or attorney
+- `get_case_details_db`: Get complete case information
+- `create_legal_case_db`: Create new legal cases
+- `update_case_status_db`: Update case status and details
+- `get_attorney_info_db`: Search attorney information
+- `search_invoices_db`: Search invoices by client or number
+- `get_invoice_db`: Get specific invoice details
+- `get_legal_rates_db`: Get service rates and pricing
+
+#### Integration Actions (14 tools)
+- **Case Management**: Search, create, update legal cases
+- **Invoice Management**: Generate, search, retrieve invoices
+- **Communication**: Send email and Teams notifications
+- **External API**: Call custom REST APIs
+- **Attorney Management**: Search attorney information and availability
+- **Rate Calculation**: Calculate legal service estimates
+
+### Tool Configuration
+
+Tools can be configured via the Settings Panel (⚙️ button):
+1. **Data Source**: Choose database, API, or auto (database-first)
+2. **API Endpoint**: Set custom legal API URL
+3. **Enable/Disable Tools**: Toggle individual tools by category
+4. **Settings Persistence**: All saved to browser localStorage
+
 ## Project Structure
 
 ```
 legal-doc-agent/
 ├── src/
-│   ├── main.py                 # Main agent application
-│   ├── tools/
-│   │   ├── document_intelligence_tool.py
-│   │   └── search_tool.py
-│   └── config.py               # Configuration loader
-├── config.yaml                 # Azure service configuration
+│   ├── main.py                      # FastAPI application & agent orchestration
+│   ├── config.py                    # Configuration loader
+│   ├── agent/
+│   │   ├── __init__.py
+│   │   ├── config.py               # Agent configuration
+│   │   ├── instructions.py         # System prompts
+│   │   └── legal_agent.py          # Main agent class
+│   └── tools/
+│       ├── __init__.py
+│       ├── document_intelligence_tool.py  # Document extraction
+│       ├── search_tool.py                 # Azure AI Search
+│       ├── database_tools.py              # SQLite database access
+│       ├── integration_actions.py         # 14 integration tools
+│       └── mcp_client.py                  # MCP client (unused)
+├── architecture.html                # Interactive architecture diagram
+├── legal_cases.db                   # SQLite database (7 tables)
+├── setup_database.py                # Database initialization script
+├── config.example.yaml              # Configuration template
 ├── requirements.txt            # Python dependencies
-├── Dockerfile                  # Container definition
+├── Dockerfile                  # Multi-stage container build
 ├── docker-compose.yaml         # Local container orchestration
-└── README.md                   # This file
+├── infra/                      # Azure infrastructure (Bicep)
+│   ├── main.bicep
+│   ├── main.parameters.json
+│   └── core/                   # Reusable Bicep modules
+└── docs/
+    ├── DEPLOYMENT.md
+    ├── SQLITE_MCP.md
+    └── INTEGRATION_ACTIONS.md
 ```
 
 ## Deployment

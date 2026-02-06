@@ -1,4 +1,4 @@
-"""Script to update Azure AI Search index with vector field"""
+"""Script to recreate the search index with correct schema"""
 import asyncio
 import os
 from azure.core.credentials import AzureKeyCredential
@@ -18,8 +18,7 @@ from azure.search.documents.indexes.models import (
     SemanticSearch,
 )
 
-async def update_index():
-    # Get configuration from environment or use defaults
+async def recreate_index():
     search_endpoint = os.getenv("SEARCH_ENDPOINT", "https://srch-7alsezpsk27uq.search.windows.net")
     search_key = os.getenv("SEARCH_API_KEY")
     
@@ -34,62 +33,44 @@ async def update_index():
     client = SearchIndexClient(endpoint=search_endpoint, credential=credential)
     
     try:
-        # Get existing index
-        print(f"Fetching existing index: {index_name}")
-        index = await client.get_index(index_name)
+        # Delete existing index
+        print(f"Deleting existing index: {index_name}")
+        try:
+            await client.delete_index(index_name)
+            print("✓ Index deleted")
+        except Exception as e:
+            print(f"Note: {e}")
         
-        # Add vector field if it doesn't exist
-        vector_field_exists = any(field.name == "content_vector" for field in index.fields)
+        # Wait a moment for deletion to complete
+        await asyncio.sleep(2)
         
-        if not vector_field_exists:
-            print("Adding vector field 'content_vector'...")
-            
-            # Add the vector field
-            index.fields.append(
+        # Create new index with correct schema
+        print(f"Creating new index: {index_name}")
+        
+        index = SearchIndex(
+            name=index_name,
+            fields=[
+                SimpleField(name="id", type=SearchFieldDataType.String, key=True),
+                SearchableField(name="title", type=SearchFieldDataType.String, sortable=True),
+                SearchableField(name="content", type=SearchFieldDataType.String),
+                SimpleField(name="upload_date", type=SearchFieldDataType.String, sortable=True),
+                SimpleField(name="file_name", type=SearchFieldDataType.String),
                 SearchField(
                     name="content_vector",
                     type=SearchFieldDataType.Collection(SearchFieldDataType.Single),
                     searchable=True,
                     vector_search_dimensions=1536,
                     vector_search_profile_name="vector-profile"
-                )
-            )
-        else:
-            print("✓ Vector field 'content_vector' already exists")
-        
-        # Add security fields if they don't exist
-        owner_id_exists = any(field.name == "owner_id" for field in index.fields)
-        allowed_users_exists = any(field.name == "allowed_users" for field in index.fields)
-        
-        if not owner_id_exists:
-            print("Adding security field 'owner_id'...")
-            index.fields.append(
-                SimpleField(
-                    name="owner_id",
-                    type=SearchFieldDataType.String,
-                    filterable=True
-                )
-            )
-        else:
-            print("✓ Security field 'owner_id' already exists")
-        
-        if not allowed_users_exists:
-            print("Adding security field 'allowed_users'...")
-            index.fields.append(
+                ),
+                SimpleField(name="owner_id", type=SearchFieldDataType.String, filterable=True),
                 SearchableField(
                     name="allowed_users",
                     type=SearchFieldDataType.Collection(SearchFieldDataType.String),
                     filterable=True,
                     searchable=True
-                )
-            )
-        else:
-            print("✓ Security field 'allowed_users' already exists")
-            
-        # Configure vector search if not present
-        if not index.vector_search:
-            print("Adding vector search configuration...")
-            index.vector_search = VectorSearch(
+                ),
+            ],
+            vector_search=VectorSearch(
                 algorithms=[
                     HnswAlgorithmConfiguration(
                         name="vector-algorithm",
@@ -107,14 +88,8 @@ async def update_index():
                         algorithm_configuration_name="vector-algorithm"
                     )
                 ]
-            )
-        else:
-            print("✓ Vector search already configured")
-        
-        # Configure semantic search if not present
-        if not index.semantic_search:
-            print("Adding semantic search configuration...")
-            index.semantic_search = SemanticSearch(
+            ),
+            semantic_search=SemanticSearch(
                 configurations=[
                     SemanticConfiguration(
                         name="default",
@@ -126,16 +101,20 @@ async def update_index():
                     )
                 ]
             )
-        else:
-            print("✓ Semantic search already configured")
+        )
         
-        # Update the index
-        print("Updating index...")
-        await client.create_or_update_index(index)
-        print("✓ Index updated successfully")
+        await client.create_index(index)
+        print("✓ Index created successfully with correct schema")
+        
+        # Verify the schema
+        print("\nVerifying index schema...")
+        created_index = await client.get_index(index_name)
+        for field in created_index.fields:
+            if field.name in ["owner_id", "allowed_users", "content_vector"]:
+                print(f"  {field.name}: {field.type} (filterable: {field.filterable})")
     
     finally:
         await client.close()
 
 if __name__ == "__main__":
-    asyncio.run(update_index())
+    asyncio.run(recreate_index())
