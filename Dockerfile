@@ -27,6 +27,12 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
+# Install Node.js for MCP server support
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user for security
 RUN useradd -m -u 1000 agentuser && \
     chown -R agentuser:agentuser /app
@@ -35,9 +41,11 @@ RUN useradd -m -u 1000 agentuser && \
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy application code
+# Copy application code and database
 COPY --chown=agentuser:agentuser src/ ./src/
 COPY --chown=agentuser:agentuser config.example.yaml ./
+COPY --chown=agentuser:agentuser legal_cases.db ./
+COPY --chown=agentuser:agentuser architecture.html ./
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1 \

@@ -20,7 +20,7 @@ from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 from openai import AsyncAzureOpenAI
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -32,7 +32,10 @@ try:
 except ImportError:
     AGENT_FRAMEWORK_AVAILABLE = False
 
-from config import load_config
+from src.config import load_config
+
+# Import new agent module
+from src.agent import LegalDocumentAgent, AgentConfig
 
 # Configure logging
 logging.basicConfig(
@@ -53,8 +56,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global config
+# Global config and agent
 config = None
+legal_agent: Optional[LegalDocumentAgent] = None
 
 # In-memory session storage (for production, use Redis or similar)
 conversation_history = {}
@@ -93,10 +97,17 @@ def get_user_id(request: Request) -> Optional[str]:
     return None
 
 # Pydantic models
+class ToolConfig(BaseModel):
+    data_source: Optional[str] = "auto"
+    api_url: Optional[str] = ""
+    enabled_tools: Optional[dict] = None
+
 class ChatMessage(BaseModel):
     message: str
     session_id: Optional[str] = None
     security_enabled: Optional[bool] = True
+    enable_functions: Optional[bool] = True
+    tool_config: Optional[ToolConfig] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -113,163 +124,10 @@ class DocumentInfo(BaseModel):
     upload_date: str
 
 
-class LegalDocumentAgent:
-    """
-    Legal Document Management AI Agent
-    
-    Provides intelligent search and document management capabilities for legal professionals
-    using Microsoft Agent Framework with Azure AI services.
-    """
-    
-    def __init__(self, config_path: str = "config.yaml"):
-        """
-        Initialize the Legal Document Agent
-        
-        Args:
-            config_path: Path to configuration file
-        """
-        logger.info("Initializing Legal Document Agent...")
-        
-        # Load configuration
-        self.config = load_config(config_path)
-        logger.info("Configuration loaded successfully")
-        
-        # Agent client will be initialized in async context
-        self.agent = None
-        self.credential = None
-        
-    async def initialize(self):
-        """Initialize async resources"""
-        logger.info("Setting up Azure credentials...")
-        self.credential = DefaultAzureCredential()
-        
-        # Create tools
-        logger.info("Initializing AI tools...")
-        
-        # Document Intelligence tool
-        doc_intel_tool = create_document_intelligence_tool(
-            endpoint=self.config.doc_intel_endpoint,
-            api_key=self.config.doc_intel_api_key,
-            model=self.config.get("document_intelligence", "model", default="prebuilt-document")
-        )
-        
-        # Azure AI Search tools
-        search_tools = create_search_tool(
-            service_endpoint=self.config.search_endpoint,
-            api_key=self.config.search_api_key,
-            index_name=self.config.search_index_name,
-            top_results=self.config.get("search", "top_results", default=5)
-        )
-        
-        # Combine all tools
-        all_tools = [doc_intel_tool] + search_tools
-        
-        logger.info(f"Initialized {len(all_tools)} tools for the agent")
-        
-        # Create the Azure AI client
-        logger.info("Creating AI agent...")
-        client = AzureAIClient(
-            project_endpoint=self.config.foundry_endpoint,
-            model_deployment_name=self.config.foundry_model_deployment,
-            credential=self.credential,
-        )
-        
-        # Create agent using the agents property
-        self.agent = await client.agents.create_agent(
-            name=self.config.agent_name,
-            instructions=self.config.agent_instructions,
-            tools=all_tools,
-        )
-        
-        logger.info("✓ Legal Document Agent initialized successfully!")
-        return self
-    
-    async def cleanup(self):
-        """Cleanup async resources"""
-        if self.agent:
-            await self.agent.__aexit__(None, None, None)
-        if self.credential:
-            await self.credential.close()
-    
-    async def run_interactive(self):
-        """
-        Run the agent in interactive mode
-        
-        Allows users to chat with the agent via command line
-        """
-        print("\n" + "="*60)
-        print("🏛️  LEGAL DOCUMENT MANAGEMENT AI AGENT")
-        print("="*60)
-        print("\nWelcome! I'm your AI assistant for legal document management.")
-        print("I can help you:")
-        print("  • Search for legal documents semantically")
-        print("  • Extract information from documents")
-        print("  • Analyze contracts, briefs, and legal files")
-        print("  • Answer questions about your legal documents")
-        print("\nType 'quit' or 'exit' to end the session.")
-        print("="*60 + "\n")
-        
-        # Create a persistent thread for conversation context
-        thread = self.agent.get_new_thread()
-        
-        while True:
-            try:
-                # Get user input
-                user_input = input("\n👤 You: ").strip()
-                
-                if not user_input:
-                    continue
-                
-                # Check for exit commands
-                if user_input.lower() in ['quit', 'exit', 'bye']:
-                    print("\n👋 Goodbye! Thank you for using Legal Document Agent.")
-                    break
-                
-                # Process the query with streaming
-                print("\n🤖 Agent: ", end="", flush=True)
-                
-                async for chunk in self.agent.run_stream(user_input, thread=thread):
-                    if chunk.text:
-                        print(chunk.text, end="", flush=True)
-                
-                print()  # New line after response
-                
-            except KeyboardInterrupt:
-                print("\n\n👋 Session interrupted. Goodbye!")
-                break
-            except Exception as e:
-                logger.error(f"Error processing query: {e}")
-                print(f"\n❌ Error: {str(e)}")
-    
-    async def run_single_query(self, query: str) -> str:
-        """
-        Run a single query against the agent
-        
-        Args:
-            query: User query
-            
-        Returns:
-            Agent response
-        """
-        logger.info(f"Processing query: {query}")
-        
-        thread = self.agent.get_new_thread()
-        response_parts = []
-        
-        async for chunk in self.agent.run_stream(query, thread=thread):
-            if chunk.text:
-                response_parts.append(chunk.text)
-        
-        response = "".join(response_parts)
-        logger.info("Query processed successfully")
-        
-        return response
-
-
 @app.on_event("startup")
 async def startup_event():
-    """Initialize configuration on startup"""
-    global config
+    """Initialize configuration and agent on startup"""
+    global config, legal_agent
     config = load_config()
     logger.info("Configuration loaded successfully")
     logger.info(f"Search endpoint: {config.search_endpoint}")
@@ -281,6 +139,38 @@ async def startup_event():
         logger.info("Search index creation/verification completed")
     except Exception as e:
         logger.error(f"Failed to create search index: {e}", exc_info=True)
+    
+    # Initialize the new agent module
+    try:
+        logger.info("Initializing Legal Document Agent...")
+        # Create agent config from loaded config
+        agent_config = AgentConfig(
+            foundry_endpoint=config.foundry_endpoint,
+            foundry_model_deployment=config.foundry_model_deployment,
+            search_endpoint=config.search_endpoint,
+            search_index_name=config.search_index_name,
+            search_api_key=config.search_api_key,
+            doc_intel_endpoint=config.doc_intel_endpoint,
+            doc_intel_api_key=config.doc_intel_api_key
+        )
+        legal_agent = LegalDocumentAgent(agent_config)
+        await legal_agent.initialize()
+        logger.info("✓ Legal Document Agent initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize agent: {e}", exc_info=True)
+        logger.warning("Agent will be unavailable - chat functionality may not work")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup resources on shutdown"""
+    global legal_agent
+    if legal_agent:
+        try:
+            await legal_agent.cleanup()
+            logger.info("Agent cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during agent cleanup: {e}")
 
 
 async def ensure_search_index():
@@ -352,6 +242,45 @@ async def get_user_info(request: Request):
         return {"authenticated": False}
 
 
+@app.get("/api/toolinfo")
+async def get_tool_info():
+    """Get available tools and their descriptions"""
+    from src.tools.integration_actions import INTEGRATION_TOOLS
+    
+    tool_info = {
+        "available_tools": [],
+        "default_api_url": "https://ca-mock-legal-api.wittymoss-05f49619.eastus2.azurecontainerapps.io",
+        "data_sources": ["database", "api", "auto"],
+        "categories": {
+            "case_management": ["search_cases", "get_case_details", "create_legal_case", "update_case_status"],
+            "invoice_management": ["search_invoices", "get_invoice", "get_client_invoices", "generate_invoice"],
+            "attorney_rates": ["get_attorney_info", "get_legal_rates", "calculate_legal_estimate"],
+            "communication": ["send_email_notification", "send_teams_notification"],
+            "external_api": ["call_external_api"]
+        }
+    }
+    
+    # Extract tool information from INTEGRATION_TOOLS
+    for tool in INTEGRATION_TOOLS:
+        func = tool.get("function", {})
+        tool_info["available_tools"].append({
+            "name": func.get("name"),
+            "description": func.get("description"),
+            "parameters": list(func.get("parameters", {}).get("properties", {}).keys())
+        })
+    
+    return tool_info
+
+
+@app.get("/architecture", response_class=HTMLResponse)
+async def architecture():
+    """Serve the architecture visualization page"""
+    arch_file = Path("architecture.html")
+    if arch_file.exists():
+        return arch_file.read_text()
+    return "<h1>Architecture page not found</h1>"
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Serve the frontend application"""
@@ -401,10 +330,30 @@ async def root():
             .status.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
             .loading { display: inline-block; width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite; }
             @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-            .security-toggle { background: rgba(255, 255, 255, 0.9); padding: 15px 20px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: none; margin: 15px auto 0; max-width: 400px; }
-            .security-toggle label { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; color: #333; justify-content: center; }
-            .security-toggle input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
-            .security-toggle .description { font-size: 11px; color: #666; margin-top: 5px; }
+            
+            .settings-btn { position: fixed; top: 20px; right: 20px; background: rgba(255, 255, 255, 0.95); color: #667eea; border: none; padding: 12px 16px; border-radius: 50%; cursor: pointer; font-size: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: all 0.3s; z-index: 1000; width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; }
+            .settings-btn:hover { background: white; transform: scale(1.1); box-shadow: 0 6px 20px rgba(102, 126, 234, 0.3); }
+            .settings-panel { position: fixed; top: 0; right: -400px; width: 400px; height: 100vh; background: white; box-shadow: -4px 0 20px rgba(0,0,0,0.1); transition: right 0.3s ease; z-index: 999; overflow-y: auto; }
+            .settings-panel.open { right: 0; }
+            .settings-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; display: flex; justify-content: space-between; align-items: center; }
+            .settings-header h2 { font-size: 1.5em; margin: 0; }
+            .close-settings { background: rgba(255, 255, 255, 0.2); border: none; color: white; font-size: 24px; cursor: pointer; padding: 5px 12px; border-radius: 50%; transition: all 0.2s; }
+            .close-settings:hover { background: rgba(255, 255, 255, 0.3); transform: rotate(90deg); }
+            .settings-content { padding: 30px; }
+            .settings-section { margin-bottom: 30px; padding-bottom: 25px; border-bottom: 1px solid #e0e0e0; }
+            .settings-section:last-child { border-bottom: none; }
+            .settings-section h3 { color: #333; font-size: 1.1em; margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
+            .settings-item { margin-bottom: 20px; }
+            .settings-item label { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+            .settings-item input[type="checkbox"] { margin-top: 3px; width: 20px; height: 20px; cursor: pointer; accent-color: #667eea; }
+            .settings-item .label-text { flex: 1; }
+            .settings-item .label-title { font-weight: 600; color: #333; margin-bottom: 4px; }
+            .settings-item .label-desc { font-size: 13px; color: #666; line-height: 1.4; }
+            .settings-status { background: #e8eaff; border-left: 4px solid #667eea; padding: 12px; border-radius: 4px; font-size: 13px; color: #333; display: none; margin-top: 15px; }
+            .settings-status.show { display: block; animation: fadeIn 0.3s; }
+            @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+            .settings-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: rgba(0, 0, 0, 0.5); display: none; z-index: 998; }
+            .settings-overlay.show { display: block; }
         </style>
     </head>
     <body>
@@ -417,12 +366,190 @@ async def root():
                     <span class="user-id" id="userId"></span>
                     <button class="signout-btn" onclick="signOut()">Sign Out</button>
                 </div>
-                <div class="security-toggle" id="securityToggle" style="display: none;">
-                    <label>
-                        <input type="checkbox" id="enableSecurity" onchange="toggleSecurity()" checked>
-                        <span>🔒 Enable Document-Level Security</span>
-                    </label>
-                    <div class="description">When enabled, you only see your own documents</div>
+            </div>
+            
+            <!-- Settings Button -->
+            <button class="settings-btn" onclick="toggleSettingsPanel()" title="Settings">⚙️</button>
+            
+            <!-- Architecture Button -->
+            <a href="/architecture" target="_blank" class="settings-btn" style="right: 90px; text-decoration: none; display: flex; align-items: center; justify-content: center;" title="View Architecture">
+                🏛️
+            </a>
+            
+            <!-- Settings Overlay -->
+            <div class="settings-overlay" id="settingsOverlay" onclick="toggleSettingsPanel()"></div>
+            
+            <!-- Settings Panel -->
+            <div class="settings-panel" id="settingsPanel">
+                <div class="settings-header">
+                    <h2>⚙️ Settings</h2>
+                    <button class="close-settings" onclick="toggleSettingsPanel()">×</button>
+                </div>
+                <div class="settings-content">
+                    <!-- Security Settings -->
+                    <div class="settings-section">
+                        <h3>🔒 Security & Privacy</h3>
+                        <div class="settings-item">
+                            <label>
+                                <input type="checkbox" id="settingsEnableSecurity" onchange="updateSecuritySetting()" checked>
+                                <div class="label-text">
+                                    <div class="label-title">Document-Level Security</div>
+                                    <div class="label-desc">When enabled, you can only view and search documents you uploaded. Disable to see all documents in the system (if you have access).</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Agent Features -->
+                    <div class="settings-section">
+                        <h3>🤖 Agent Features</h3>
+                        <div class="settings-item">
+                            <label>
+                                <input type="checkbox" id="settingsEnableFunctions" onchange="updateFunctionsSetting()" checked>
+                                <div class="label-text">
+                                    <div class="label-title">Enable Integration Actions</div>
+                                    <div class="label-desc">Allow the agent to call external APIs, send notifications, generate invoices, and manage legal cases. Recommended for full functionality.</div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Tool Configuration -->
+                    <div class="settings-section">
+                        <h3>🔧 Tool Configuration</h3>
+                        
+                        <!-- Data Source Preference -->
+                        <div class="settings-item" style="border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 15px;">
+                            <label style="font-weight: 600; color: #333; margin-bottom: 10px; display: block;">Data Source</label>
+                            <select id="settingsDataSource" onchange="updateDataSourceSetting()" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+                                <option value="database">SQLite Database (Local)</option>
+                                <option value="api">External API</option>
+                                <option value="auto">Auto (Database First, then API)</option>
+                            </select>
+                            <div style="font-size: 12px; color: #666; margin-top: 5px;">Choose where to retrieve case and invoice data</div>
+                        </div>
+                        
+                        <!-- API Configuration -->
+                        <div class="settings-item" style="border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 15px;">
+                            <label style="font-weight: 600; color: #333; margin-bottom: 10px; display: block;">Legal API Endpoint</label>
+                            <input type="text" id="settingsApiUrl" onchange="updateApiUrlSetting()" 
+                                   placeholder="https://ca-mock-legal-api.wittymoss-05f49619.eastus2.azurecontainerapps.io" 
+                                   style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; font-family: monospace;">
+                            <div style="font-size: 12px; color: #666; margin-top: 5px;">Base URL for legal management API</div>
+                        </div>
+                        
+                        <!-- Available Tools -->
+                        <div style="margin-top: 20px;">
+                            <label style="font-weight: 600; color: #333; margin-bottom: 10px; display: block;">Enabled Tools</label>
+                            
+                            <!-- Case Management Tools -->
+                            <details style="margin-bottom: 10px; border: 1px solid #eee; border-radius: 4px; padding: 10px;">
+                                <summary style="cursor: pointer; font-weight: 500; color: #0078d4;">📋 Case Management (4)</summary>
+                                <div style="padding: 10px 0 5px 20px;">
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolSearchCases" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>search_cases - Search legal cases</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolGetCaseDetails" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>get_case_details - Get case information</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolCreateCase" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>create_legal_case - Create new case</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolUpdateCase" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>update_case_status - Update case status</span>
+                                    </label>
+                                </div>
+                            </details>
+                            
+                            <!-- Invoice Management Tools -->
+                            <details style="margin-bottom: 10px; border: 1px solid #eee; border-radius: 4px; padding: 10px;">
+                                <summary style="cursor: pointer; font-weight: 500; color: #0078d4;">💰 Invoice Management (4)</summary>
+                                <div style="padding: 10px 0 5px 20px;">
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolSearchInvoices" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>search_invoices - Search invoices</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolGetInvoice" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>get_invoice - Get invoice details</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolGetClientInvoices" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>get_client_invoices - Get client invoices</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolGenerateInvoice" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>generate_invoice - Generate new invoice</span>
+                                    </label>
+                                </div>
+                            </details>
+                            
+                            <!-- Attorney & Rate Tools -->
+                            <details style="margin-bottom: 10px; border: 1px solid #eee; border-radius: 4px; padding: 10px;">
+                                <summary style="cursor: pointer; font-weight: 500; color: #0078d4;">👔 Attorney & Rates (3)</summary>
+                                <div style="padding: 10px 0 5px 20px;">
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolGetAttorney" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>get_attorney_info - Get attorney info</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolGetRates" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>get_legal_rates - Get service rates</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolCalculateEstimate" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>calculate_legal_estimate - Calculate cost</span>
+                                    </label>
+                                </div>
+                            </details>
+                            
+                            <!-- Communication Tools -->
+                            <details style="margin-bottom: 10px; border: 1px solid #eee; border-radius: 4px; padding: 10px;">
+                                <summary style="cursor: pointer; font-weight: 500; color: #0078d4;">📧 Communication (2)</summary>
+                                <div style="padding: 10px 0 5px 20px;">
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolSendEmail" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>send_email_notification - Send emails</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolSendTeams" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>send_teams_notification - Send Teams messages</span>
+                                    </label>
+                                </div>
+                            </details>
+                            
+                            <!-- External API Tool -->
+                            <details style="margin-bottom: 10px; border: 1px solid #eee; border-radius: 4px; padding: 10px;">
+                                <summary style="cursor: pointer; font-weight: 500; color: #0078d4;">🌐 External API (1)</summary>
+                                <div style="padding: 10px 0 5px 20px;">
+                                    <label style="display: flex; align-items: center; margin-bottom: 8px; font-size: 13px;">
+                                        <input type="checkbox" id="toolCallApi" onchange="updateToolSettings()" checked style="margin-right: 8px;">
+                                        <span>call_external_api - Call custom APIs</span>
+                                    </label>
+                                </div>
+                            </details>
+                            
+                            <button onclick="resetToolSettings()" style="width: 100%; margin-top: 10px; padding: 8px; background: #f0f0f0; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-size: 13px;">
+                                ↺ Reset to Defaults
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Settings Info -->
+                    <div class="settings-section">
+                        <h3>ℹ️ About Settings</h3>
+                        <div style="font-size: 13px; color: #666; line-height: 1.6;">
+                            <p style="margin-bottom: 10px;"><strong>Document Security:</strong> Controls whether you see only your documents or all accessible documents.</p>
+                            <p style="margin-bottom: 10px;"><strong>Integration Actions:</strong> Enables advanced features like API calls, notifications, invoice generation, and case management.</p>
+                            <p style="margin-bottom: 0;">💡 Settings are saved to your browser and persist across sessions.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-status" id="settingsStatus">✓ Settings saved</div>
                 </div>
             </div>
             
@@ -465,17 +592,155 @@ async def root():
         <script>
             let sessionId = null;
 
-            // Security settings
+            // Settings Panel Management
+            function toggleSettingsPanel() {
+                const panel = document.getElementById('settingsPanel');
+                const overlay = document.getElementById('settingsOverlay');
+                panel.classList.toggle('open');
+                overlay.classList.toggle('show');
+            }
+
+            function showSettingsStatus() {
+                const status = document.getElementById('settingsStatus');
+                status.classList.add('show');
+                setTimeout(() => status.classList.remove('show'), 2000);
+            }
+
             function getSecurityEnabled() {
                 const saved = localStorage.getItem('documentSecurityEnabled');
                 return saved === null ? true : saved === 'true';
             }
 
-            function toggleSecurity() {
-                const enabled = document.getElementById('enableSecurity').checked;
+            function getFunctionsEnabled() {
+                const saved = localStorage.getItem('enableFunctions');
+                return saved === null ? true : saved === 'true';
+            }
+
+            function updateSecuritySetting() {
+                const enabled = document.getElementById('settingsEnableSecurity').checked;
                 localStorage.setItem('documentSecurityEnabled', enabled);
                 // Reload documents with new security setting
                 loadDocuments();
+                showSettingsStatus();
+            }
+
+            function updateFunctionsSetting() {
+                const enabled = document.getElementById('settingsEnableFunctions').checked;
+                localStorage.setItem('enableFunctions', enabled);
+                showSettingsStatus();
+            }
+            
+            function updateDataSourceSetting() {
+                const source = document.getElementById('settingsDataSource').value;
+                localStorage.setItem('dataSource', source);
+                showSettingsStatus();
+            }
+            
+            function updateApiUrlSetting() {
+                const url = document.getElementById('settingsApiUrl').value.trim();
+                if (url) {
+                    localStorage.setItem('legalApiUrl', url);
+                    showSettingsStatus();
+                }
+            }
+            
+            function getToolSettings() {
+                const saved = localStorage.getItem('enabledTools');
+                if (saved) {
+                    try {
+                        return JSON.parse(saved);
+                    } catch (e) {
+                        console.error('Error parsing tool settings:', e);
+                    }
+                }
+                // Default: all tools enabled
+                return {
+                    search_cases: true,
+                    get_case_details: true,
+                    create_legal_case: true,
+                    update_case_status: true,
+                    search_invoices: true,
+                    get_invoice: true,
+                    get_client_invoices: true,
+                    generate_invoice: true,
+                    get_attorney_info: true,
+                    get_legal_rates: true,
+                    calculate_legal_estimate: true,
+                    send_email_notification: true,
+                    send_teams_notification: true,
+                    call_external_api: true
+                };
+            }
+            
+            function updateToolSettings() {
+                const tools = {
+                    search_cases: document.getElementById('toolSearchCases').checked,
+                    get_case_details: document.getElementById('toolGetCaseDetails').checked,
+                    create_legal_case: document.getElementById('toolCreateCase').checked,
+                    update_case_status: document.getElementById('toolUpdateCase').checked,
+                    search_invoices: document.getElementById('toolSearchInvoices').checked,
+                    get_invoice: document.getElementById('toolGetInvoice').checked,
+                    get_client_invoices: document.getElementById('toolGetClientInvoices').checked,
+                    generate_invoice: document.getElementById('toolGenerateInvoice').checked,
+                    get_attorney_info: document.getElementById('toolGetAttorney').checked,
+                    get_legal_rates: document.getElementById('toolGetRates').checked,
+                    calculate_legal_estimate: document.getElementById('toolCalculateEstimate').checked,
+                    send_email_notification: document.getElementById('toolSendEmail').checked,
+                    send_teams_notification: document.getElementById('toolSendTeams').checked,
+                    call_external_api: document.getElementById('toolCallApi').checked
+                };
+                localStorage.setItem('enabledTools', JSON.stringify(tools));
+                showSettingsStatus();
+            }
+            
+            function resetToolSettings() {
+                if (confirm('Reset all tool settings to defaults?')) {
+                    localStorage.removeItem('enabledTools');
+                    localStorage.removeItem('dataSource');
+                    localStorage.removeItem('legalApiUrl');
+                    loadSettingsState();
+                    showSettingsStatus();
+                }
+            }
+
+            function toggleSecurity() {
+                // Legacy function - now just redirects to settings panel behavior
+                const enabled = document.getElementById('settingsEnableSecurity').checked;
+                localStorage.setItem('documentSecurityEnabled', enabled);
+                // Reload documents with new security setting
+                loadDocuments();
+            }
+
+            function loadSettingsState() {
+                // Load saved settings into the settings panel
+                document.getElementById('settingsEnableSecurity').checked = getSecurityEnabled();
+                document.getElementById('settingsEnableFunctions').checked = getFunctionsEnabled();
+                
+                // Load data source setting
+                const dataSource = localStorage.getItem('dataSource') || 'auto';
+                document.getElementById('settingsDataSource').value = dataSource;
+                
+                // Load API URL
+                const apiUrl = localStorage.getItem('legalApiUrl') || '';
+                document.getElementById('settingsApiUrl').value = apiUrl;
+                document.getElementById('settingsApiUrl').placeholder = 'https://ca-mock-legal-api.wittymoss-05f49619.eastus2.azurecontainerapps.io';
+                
+                // Load tool settings
+                const tools = getToolSettings();
+                document.getElementById('toolSearchCases').checked = tools.search_cases !== false;
+                document.getElementById('toolGetCaseDetails').checked = tools.get_case_details !== false;
+                document.getElementById('toolCreateCase').checked = tools.create_legal_case !== false;
+                document.getElementById('toolUpdateCase').checked = tools.update_case_status !== false;
+                document.getElementById('toolSearchInvoices').checked = tools.search_invoices !== false;
+                document.getElementById('toolGetInvoice').checked = tools.get_invoice !== false;
+                document.getElementById('toolGetClientInvoices').checked = tools.get_client_invoices !== false;
+                document.getElementById('toolGenerateInvoice').checked = tools.generate_invoice !== false;
+                document.getElementById('toolGetAttorney').checked = tools.get_attorney_info !== false;
+                document.getElementById('toolGetRates').checked = tools.get_legal_rates !== false;
+                document.getElementById('toolCalculateEstimate').checked = tools.calculate_legal_estimate !== false;
+                document.getElementById('toolSendEmail').checked = tools.send_email_notification !== false;
+                document.getElementById('toolSendTeams').checked = tools.send_teams_notification !== false;
+                document.getElementById('toolCallApi').checked = tools.call_external_api !== false;
             }
 
             // Store current user ID globally
@@ -492,13 +757,15 @@ async def root():
                         document.getElementById('userName').textContent = `👤 ${data.name}`;
                         document.getElementById('userId').textContent = `ID: ${data.id || 'N/A'}`;
                         document.getElementById('userInfo').style.display = 'flex';
-                        document.getElementById('securityToggle').style.display = 'block';
                         
-                        // Set checkbox state from localStorage
-                        document.getElementById('enableSecurity').checked = getSecurityEnabled();
                     }
+                    
+                    // Load settings panel state
+                    loadSettingsState();
                 } catch (error) {
                     console.error('Error loading user info:', error);
+                    // Still load settings even if user info fails
+                    loadSettingsState();
                 }
             }
 
@@ -642,30 +909,46 @@ async def root():
                 input.value = '';
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
-                // Add loading indicator
-                messagesDiv.innerHTML += '<div class="message agent-message" id="loading"><div class="loading"></div> Thinking...</div>';
+                // Add placeholder for agent response
+                messagesDiv.innerHTML += '<div class="message agent-message" id="agent-response"></div>';
+                const agentResponseDiv = document.getElementById('agent-response');
                 messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
                 try {
                     const securityEnabled = getSecurityEnabled();
+                    const functionsEnabled = getFunctionsEnabled();
                     const response = await fetch('/api/chat', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message, session_id: sessionId, security_enabled: securityEnabled })
+                        body: JSON.stringify({ 
+                            message, 
+                            session_id: sessionId, 
+                            security_enabled: securityEnabled,
+                            enable_functions: functionsEnabled
+                        })
                     });
 
-                    const data = await response.json();
-                    sessionId = data.session_id;
+                    // Handle streaming response
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let fullResponse = '';
 
-                    // Remove loading indicator
-                    document.getElementById('loading').remove();
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        
+                        const chunk = decoder.decode(value, { stream: true });
+                        fullResponse += chunk;
+                        agentResponseDiv.innerHTML = fullResponse;
+                        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                    }
 
-                    // Add agent response
-                    messagesDiv.innerHTML += `<div class="message agent-message">${data.response}</div>`;
-                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                    // Remove the temporary ID after streaming completes
+                    agentResponseDiv.removeAttribute('id');
+                    
                 } catch (error) {
-                    document.getElementById('loading').remove();
-                    messagesDiv.innerHTML += `<div class="message agent-message" style="background: #f8d7da; color: #721c24;">Error: ${error.message}</div>`;
+                    agentResponseDiv.innerHTML = `<div style="background: #f8d7da; color: #721c24; padding: 10px; border-radius: 4px;">Error: ${error.message}</div>`;
+                    agentResponseDiv.removeAttribute('id');
                     messagesDiv.scrollTop = messagesDiv.scrollHeight;
                 }
             }
@@ -1047,283 +1330,61 @@ async def get_document_content(document_id: str):
 
 @app.post("/api/chat")
 async def chat(message: ChatMessage, request: Request = None):
-    """Chat with the agent using AI model with hybrid search (keyword + vector)"""
+    """Chat with the agent using the new LegalDocumentAgent"""
     try:
+        # Check if agent is initialized
+        if not legal_agent:
+            logger.error("Legal agent not initialized")
+            return JSONResponse(
+                status_code=503,
+                content={"error": "Agent not available. Please try again later."}
+            )
+        
         # Get current user ID for security filtering
         user_id = get_user_id(request) if request else None
         security_enabled = message.security_enabled
-        logger.info(f"Chat query: {message.message} (User: {user_id or 'anonymous'}, Security: {security_enabled})")
+        enable_functions = message.enable_functions
+        tool_config = message.tool_config
         
-        # Generate query embedding for vector search
-        logger.info("Generating query embedding for hybrid search...")
-        query_vector = await generate_embedding(message.message)
+        # Log tool configuration
+        if tool_config:
+            logger.info(f"Tool config - Data source: {tool_config.data_source}, API URL: {tool_config.api_url}")
+            if tool_config.enabled_tools:
+                enabled_count = sum(1 for v in tool_config.enabled_tools.values() if v)
+                logger.info(f"Enabled tools: {enabled_count}/{len(tool_config.enabled_tools)}")
         
-        # Search for relevant documents using hybrid search
-        search_client = SearchClient(
-            endpoint=config.search_endpoint,
-            index_name=config.search_index_name,
-            credential=AzureKeyCredential(config.search_api_key)
+        logger.info(f"Chat query: {message.message} (User: {user_id or 'anonymous'}, Security: {security_enabled}, Functions: {enable_functions})")
+        
+        # Use streaming response for better UX
+        async def generate_stream():
+            """Generate streaming response from agent"""
+            try:
+                session_id = message.session_id or str(uuid.uuid4())
+                
+                # Stream response from agent
+                async for chunk in legal_agent.chat(
+                    message=message.message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    security_enabled=security_enabled,
+                    enable_functions=enable_functions
+                ):
+                    yield chunk
+                    
+            except Exception as e:
+                logger.error(f"Error in agent stream: {e}", exc_info=True)
+                error_msg = f"<div style='padding: 15px; background: #f8d7da; border-left: 4px solid #dc3545; border-radius: 4px;'>"
+                error_msg += f"<p style='margin: 0; color: #721c24;'><strong>Error:</strong> {str(e)}</p>"
+                error_msg += "</div>"
+                yield error_msg
+        
+        # Return streaming response
+        from starlette.responses import StreamingResponse
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/plain"
         )
         
-        try:
-            # Prepare vector query if embedding was generated
-            vector_queries = []
-            if query_vector:
-                from azure.search.documents.models import VectorFilterMode
-                vector_queries.append(
-                    VectorizedQuery(
-                        vector=query_vector,
-                        k_nearest_neighbors=50,  # Get more candidates
-                        fields="content_vector",
-                        exhaustive=True  # Use exhaustive search for better accuracy
-                    )
-                )
-                logger.info("✓ Using hybrid search (keyword + vector)")
-            else:
-                logger.info("⚠ Using keyword-only search (no embeddings)")
-            
-            # Perform hybrid search (combines keyword and vector search)
-            # Vector weight is higher for better semantic matching
-            # Build security filter
-            security_filter = None
-            if security_enabled:
-                if user_id:
-                    security_filter = f"allowed_users/any(u: u eq '{user_id}')"
-                    logger.info(f"Applying security filter for user: {user_id}")
-                else:
-                    security_filter = "allowed_users/any(u: u eq 'anonymous')"
-                    logger.info("Applying security filter for anonymous user")
-            else:
-                logger.info("Document-level security disabled - searching all documents")
-            
-            results = await search_client.search(
-                search_text=message.message if message.message and message.message.strip() else None,
-                vector_queries=vector_queries if vector_queries else None,
-                select=["title", "content", "file_name"],
-                filter=security_filter,
-                query_type="semantic",  # Always use semantic ranking for better relevance
-                semantic_configuration_name="default",
-                top=3  # Get top 3 most relevant results
-            )
-            
-            context_docs = []
-            result_count = 0
-            top_score = 0
-            
-            async for result in results:
-                result_count += 1
-                content = result.get('content', '')
-                score = result.get('@search.score', 0)
-                title = result.get('title', 'Untitled')
-                
-                # Boost score if query terms appear in the content (exact match bonus)
-                query_lower = message.message.lower()
-                content_lower = content.lower()
-                original_content = content  # Keep original for case-sensitive matching
-                
-                # Check for exact phrase matches (e.g., invoice numbers with hyphens)
-                # First, check for case-sensitive exact matches (invoice numbers, IDs)
-                import re
-                # Find patterns like invoice numbers: XXX-XXXX-XXX
-                invoice_patterns = re.findall(r'\b[A-Z]{2,}-\d{4}-\d+\b', message.message)
-                exact_id_matches = sum(1 for pattern in invoice_patterns if pattern in original_content)
-                
-                # Then check for regular word matches (longer words only to avoid common terms)
-                query_words = [w for w in query_lower.split() if len(w) > 4]  # Only words longer than 4 chars
-                word_matches = sum(1 for word in query_words if word in content_lower)
-                
-                # Calculate total matches
-                total_matches = exact_id_matches * 3 + word_matches  # ID matches worth 3x more
-                total_possible = len(invoice_patterns) * 3 + len(query_words)
-                match_ratio = total_matches / total_possible if total_possible > 0 else 0
-                
-                # Boost score based on matches - up to 5x boost for perfect ID matches
-                boost_multiplier = 1 + (match_ratio * 4)
-                boosted_score = score * boost_multiplier
-                
-                logger.info(f"Result {result_count}: {title} - Original: {score:.4f}, ID matches: {exact_id_matches}/{len(invoice_patterns)}, Word matches: {word_matches}/{len(query_words)}, Boosted: {boosted_score:.4f}")
-                
-                # Track the highest boosted score
-                if result_count == 1:
-                    top_score = boosted_score
-                
-                # If we have multiple results, only include results within 50% of the top boosted score
-                # This is more aggressive filtering for better precision
-                if result_count > 1 and top_score > 0:
-                    score_ratio = boosted_score / top_score
-                    if score_ratio < 0.50:
-                        logger.info(f"Filtering out: {title} (boosted score {boosted_score:.4f} is {score_ratio:.1%} of top {top_score:.4f})")
-                        continue
-                
-                if content:
-                    context_docs.append({
-                        'title': title,
-                        'content': content[:8000],  # Increased from 1500 to 8000 chars for more complete context
-                        'score': boosted_score
-                    })
-            
-            logger.info(f"Hybrid search found {result_count} results, using {len(context_docs)} after relevance filtering")
-            
-            # Generate AI response using the model
-            if context_docs:
-                logger.info("Context found, attempting to call AI model...")
-                # Build context for the AI with document identifiers
-                context_text = "\n\n".join([
-                    f"[DOCUMENT {i+1}: {doc['title']}]\n{doc['content']}" 
-                    for i, doc in enumerate(context_docs)
-                ])
-                
-                # Log context summary for debugging
-                for i, doc in enumerate(context_docs):
-                    logger.info(f"Document {i+1}: {doc['title']} - {len(doc['content'])} chars")
-                logger.info(f"Total context length: {len(context_text)} characters")
-                
-                # Call the AI model
-                try:
-                    logger.info("Importing OpenAI client for AI Foundry...")
-                    from openai import AsyncAzureOpenAI
-                    from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential, get_bearer_token_provider
-                    
-                    # Extract base URL from the full foundry endpoint
-                    # The foundry_endpoint may include project path like:
-                    # https://aifoundryprojectdemoresource.services.ai.azure.com/api/projects/xxx
-                    # We need just: https://aifoundryprojectdemoresource.services.ai.azure.com
-                    from urllib.parse import urlparse
-                    parsed_url = urlparse(config.foundry_endpoint)
-                    base_endpoint = f"{parsed_url.scheme}://{parsed_url.netloc}"
-                    
-                    logger.info(f"Creating OpenAI client with base endpoint: {base_endpoint}")
-                    
-                    # Get token provider for AI Foundry
-                    credential = AsyncDefaultAzureCredential()
-                    token_provider = get_bearer_token_provider(credential, "https://ai.azure.com/.default")
-                    
-                    async with AsyncAzureOpenAI(
-                        azure_endpoint=base_endpoint,
-                        azure_ad_token_provider=token_provider,
-                        api_version="2024-08-01-preview"
-                    ) as ai_client:
-                        
-                        # Get or create session history
-                        session_id = message.session_id or str(uuid.uuid4())
-                        if session_id not in conversation_history:
-                            conversation_history[session_id] = []
-                        
-                        # Build messages with conversation history
-                        messages = [
-                            {"role": "system", "content": "You are a helpful legal document assistant. Answer questions using ONLY the exact information from the provided documents. Rules:\n1. NEVER infer, calculate, or assume information not explicitly stated\n2. If information is not in the documents, respond: 'This information is not provided in the documents.'\n3. Be CONSISTENT - if you said information isn't available, don't provide it in follow-up questions\n4. Quote EXACT values (numbers, dates, names) from documents\n5. At the END, add: <!-- SOURCES: [document numbers you used] -->\n\nExample: If asked 'What is the rate?' and the document says 'Hourly Rate: $350/hour', respond with the exact rate. If the rate is not explicitly stated, say it's not provided.\n\nProvide clean HTML without ```html blocks."}
-                        ]
-                        
-                        # Add conversation history (last 5 turns to keep context manageable)
-                        for hist_msg in conversation_history[session_id][-5:]:
-                            messages.append(hist_msg)
-                        
-                        # Add current query with document context
-                        messages.append({
-                            "role": "user",
-                            "content": f"Based on these documents:\n\n{context_text}\n\nUser question: {message.message}\n\nProvide a clear, well-formatted HTML response using ONLY the exact information from the documents above. Do not guess or infer anything. If the specific information requested is not explicitly stated, say so. At the END of your response, add '<!-- SOURCES: [document numbers] -->' to indicate which documents you used. Return ONLY the HTML, no markdown code blocks."
-                        })
-                        
-                        logger.info(f"Calling AI model: {config.foundry_model_deployment} (with {len(conversation_history[session_id])} history messages)")
-                        ai_response = await ai_client.chat.completions.create(
-                            model=config.foundry_model_deployment,
-                            messages=messages,
-                            temperature=0.1,  # Very low for maximum precision
-                            max_tokens=2000  # Increased to handle larger context windows
-                        )
-                        
-                        logger.info("✓ AI model response received")
-                        ai_answer = ai_response.choices[0].message.content
-                        
-                        # Strip markdown code blocks if present
-                        import re
-                        ai_answer = re.sub(r'^```html\s*', '', ai_answer, flags=re.MULTILINE)
-                        ai_answer = re.sub(r'\s*```$', '', ai_answer, flags=re.MULTILINE)
-                        ai_answer = ai_answer.strip()
-                        
-                        # Extract source document numbers from the AI response
-                        source_pattern = r'<!-- SOURCES: ([0-9,\s]+) -->'
-                        source_match = re.search(source_pattern, ai_answer)
-                        used_doc_indices = []
-                        if source_match:
-                            # Extract and parse document numbers
-                            doc_nums_str = source_match.group(1)
-                            used_doc_indices = [int(num.strip()) - 1 for num in doc_nums_str.split(',') if num.strip().isdigit()]
-                            # Remove the source comment from the answer
-                            ai_answer = re.sub(source_pattern, '', ai_answer).strip()
-                        
-                        # Store conversation history (without the source comment)
-                        conversation_history[session_id].append({"role": "user", "content": message.message})
-                        conversation_history[session_id].append({"role": "assistant", "content": ai_answer})
-                        
-                        # Limit history size (keep last 10 messages = 5 turns)
-                        if len(conversation_history[session_id]) > 10:
-                            conversation_history[session_id] = conversation_history[session_id][-10:]
-                        
-                        # Check if the AI says the information is not found
-                        not_found_patterns = [
-                            r'not mentioned',
-                            r'not found',
-                            r'no information',
-                            r'does not contain',
-                            r'is not in',
-                            r'not included',
-                            r'not present',
-                            r'doesn\'t mention',
-                            r'no reference to'
-                        ]
-                        answer_lower = ai_answer.lower()
-                        info_not_found = any(re.search(pattern, answer_lower) for pattern in not_found_patterns)
-                        
-                        # Format the final response with sources
-                        response = f"<div style='font-family: system-ui, -apple-system, sans-serif;'>"
-                        response += f"<div style='padding: 15px; background: #f0f7ff; border-left: 4px solid #0078d4; border-radius: 4px; margin-bottom: 20px;'>"
-                        response += ai_answer
-                        response += "</div>"
-                        
-                        # Only add source documents if information was found
-                        if not info_not_found:
-                            # Filter to only show documents that were actually used
-                            sources_to_show = context_docs if not used_doc_indices else [context_docs[i] for i in used_doc_indices if i < len(context_docs)]
-                            
-                            if sources_to_show:
-                                response += f"<div style='margin-top: 20px;'><strong style='color: #666;'>📚 Sources ({len(sources_to_show)} document{'s' if len(sources_to_show) > 1 else ''}):</strong></div>"
-                                for doc in sources_to_show:
-                                    response += f"<div style='margin: 8px 0; padding: 8px; background: #f8f9fa; border-radius: 4px; font-size: 13px; color: #555;'>"
-                                    response += f"📄 {doc['title']}"
-                                    response += "</div>"
-                        response += "</div>"
-                        
-                        # Return response with session_id
-                        return ChatResponse(response=response, session_id=session_id)
-                        
-                except Exception as ai_error:
-                    logger.error(f"AI model error: {ai_error}", exc_info=True)
-                    # Fallback to search results
-                    response = f"<div style='font-family: system-ui, -apple-system, sans-serif;'>"
-                    response += f"<p><strong>Found {len(context_docs)} relevant document(s):</strong></p>"
-                    
-                    for doc in context_docs:
-                        response += f"<div style='margin: 15px 0; padding: 15px; background: #f8f9fa; border-left: 4px solid #0078d4; border-radius: 4px;'>"
-                        response += f"<div style='font-size: 16px; font-weight: 600; color: #0078d4; margin-bottom: 8px;'>📄 {doc['title']}</div>"
-                        formatted_content = doc['content'].replace('\n', '<br>')
-                        response += f"<div style='font-size: 14px; line-height: 1.6; color: #333;'>{formatted_content}"
-                        if len(doc['content']) >= 1500:
-                            response += "<span style='color: #666;'> ...</span>"
-                        response += "</div></div>"
-                    response += "</div>"
-            else:
-                response = f"<div style='padding: 15px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;'>"
-                response += f"<p style='margin: 0; color: #856404;'><strong>No documents found</strong></p>"
-                response += f"<p style='margin: 8px 0 0 0; color: #856404;'>I searched for '{message.message}' but couldn't find matching documents. Try uploading documents first or ask about different topics.</p>"
-                response += "</div>"
-            
-            session_id = message.session_id or str(uuid.uuid4())
-            return ChatResponse(response=response, session_id=session_id)
-            
-        finally:
-            await search_client.close()
-            
     except Exception as e:
         logger.error(f"Error in chat: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -1420,5 +1481,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    # Run the agent
-    asyncio.run(main())
+
+
